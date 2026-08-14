@@ -212,5 +212,4 @@ DMetFinder/
 
 ## License
 
-This project is for research purposes. Please cite appropriately if used in publications.#   D M e t F i n d e r  
- 
+This project is for research purposes. Please cite appropriately if used in publications.
