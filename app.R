@@ -9,7 +9,8 @@
 #   5. Compare 80% ions of one group against total ions of the other group
 #   6. Differential ion screening summary
 # MSGeter: Mass Spectrometry Data Processing Tool
-#   Ms1Geter: Extract MS1 and MS2 information from raw mass spectrometry data (.raw)
+#   Ms1Geter: Extract MS1 and MS2 information from mass spectrometry data
+#             (supports Thermo .raw via rawrr, .mzML/.mzXML via mzR - lazy loaded)
 #   Ms2Geter: Extract matched MS2 spectra from MSP files based on target feature list
 # ============================================================
 
@@ -32,6 +33,11 @@ library(rawrr)
 
 # Increase upload file size limit (default 5MB, set to 500MB here)
 options(shiny.maxRequestSize = 500 * 1024^2)
+
+# ============================================================
+# Source Visual Theme (shared with the standalone shiny_app entry)
+# ============================================================
+source("shiny_app/ui/theme.R")
 
 # ============================================================
 # Source Configuration

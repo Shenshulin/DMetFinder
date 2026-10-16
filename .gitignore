@@ -1,0 +1,14 @@
+# ---- AI assistant / local working data (not part of the application) ----
+.workbuddy/
+
+# ---- R session and project artefacts ----
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# ---- OS / editor noise ----
+.DS_Store
+Thumbs.db
+desktop.ini

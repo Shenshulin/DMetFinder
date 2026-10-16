@@ -194,7 +194,8 @@ dmetfinder_server <- function(input, output, session) {
       "GroupB-80PercentIonsVsGroupATotalIons.xlsx"
     )
     tags$ul(
-      lapply(files, function(f) tags$li(f))
+      class = "file-list",
+      lapply(files, function(f) tags$li(icon("file-excel"), f))
     )
   })
   

@@ -39,7 +39,14 @@ A comprehensive metabolomics analysis platform built with **R Shiny**, integrati
 
 #### Ms1Geter
 
-Extracts MS1 and MS2 information from raw mass spectrometry data (`.raw` files) and generates intermediate files for downstream analysis.
+Extracts MS1 and MS2 information from mass spectrometry data files and generates intermediate files for downstream analysis.
+
+**Supported input formats:**
+
+| Format | Reader | Notes |
+| --- | --- | --- |
+| `.raw` (Thermo) | `rawrr` | Requires Thermo RawFileReader .NET library; MS1 scans are identified by scan type `FTMS - p ESI Full ms [100.0000-1500.0000]` |
+| `.mzML` / `.mzXML` | `mzR` | Uses `msLevel` / precursor m/z metadata (no scan-type hardcoding); profile spectra are centroided automatically; ion mode is inferred from the polarity annotation |
 
 **Inputs:**
 
@@ -91,7 +98,8 @@ Extracts matched MS2 spectra from MSP files based on a target feature list, gene
   - `shiny`, `shinyWidgets`, `shinyFiles`
   - `readxl`, `writexl`, `dplyr`, `DT`
   - `openxlsx`, `stringr`, `tools`, `data.table`, `purrr`
-  - `rawrr` (requires Thermo RawFileReader .NET library)
+  - `rawrr` (requires Thermo RawFileReader .NET library) — for `.raw` files
+  - `mzR` (Bioconductor) — for `.mzML` / `.mzXML` files
 
 ## Installation
 
@@ -100,10 +108,10 @@ Extracts matched MS2 spectra from MSP files based on a target feature list, gene
 install.packages(c("shiny", "shinyWidgets", "shinyFiles", "readxl", "writexl",
                    "dplyr", "DT", "openxlsx", "stringr", "tools", "data.table", "purrr"))
 
-# Install rawrr from Bioconductor
+# Install rawrr and mzR from Bioconductor
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-BiocManager::install("rawrr")
+BiocManager::install(c("rawrr", "mzR"))
 ```
 
 ## Usage
@@ -169,11 +177,42 @@ DMetFinder/
 ├── server/                      # Server logic
 │   ├── dmetfinder_server.R      # DMetFinder server logic
 │   └── main_server.R            # Main server entry
-└── ui/                          # UI logic
-    ├── dmetfinder_ui.R          # DMetFinder UI
-    ├── main_ui.R                # Main UI (navbar)
-    └── msgeter_ui.R             # MSGeter UI
+├── ui/                          # UI logic
+│   ├── dmetfinder_ui.R          # DMetFinder UI
+│   ├── main_ui.R                # Main UI (navbar)
+│   └── msgeter_ui.R             # MSGeter UI
+├── www/                         # Static assets (favicon)
+└── shiny_app/                   # MSGeter module + standalone MSGeter entry point
+    ├── app.R                    # Standalone MSGeter entry (optional)
+    ├── server/
+    │   ├── FeatureGeter_server.R
+    │   └── Ms2Geter_server.R
+    ├── ui/
+    │   ├── theme.R              # Shared visual theme (single source of truth)
+    │   ├── FeatureGeter_ui.R
+    │   └── Ms2Geter_ui.R
+    └── www/                     # Static assets for the standalone entry
 ```
+
+---
+
+## UI Theme
+
+All visual styling lives in one file, `shiny_app/ui/theme.R`, which is sourced by
+both entry points (`app.R` and `shiny_app/app.R`):
+
+| Function | Purpose |
+| --- | --- |
+| `app_theme()` | Bootstrap 5 variables via `bslib::bs_theme()` (primary colour, background, radius, font stack) |
+| `app_css()` | `<style>` block with component styling (navbar, cards, sidebar, tables, log console, buttons) |
+| `hero_panel()` | Module hero banner |
+| `sub_bar()` | Section sub-header |
+| `card_panel()` / `side_group()` / `format_hint()` | Reusable card, sidebar group and hint blocks |
+
+Both entry points pass `theme = app_theme()` and `header = app_css()` to their
+top-level page function. Change a colour or component style in this one file and
+both applications follow. The theme is presentation-only: no input or output id
+was changed.
 
 ---
 
@@ -207,8 +246,9 @@ DMetFinder/
 ## Notes
 
 - Upload file size limit is set to 500 MB (see `shiny.maxRequestSize` in `app.R`)
-- Sample names must match `.raw` filenames (without extension)
-- Ms1Geter is currently written for a specific scan type (`FTMS - p ESI Full ms [100.0000-1500.0000]`); adjust the scan type check in `FeatureGeter_server.R` for other instrument methods
+- Sample names must match MS data filenames (without extension)
+- `.raw` files: Ms1Geter is currently written for a specific scan type (`FTMS - p ESI Full ms [100.0000-1500.0000]`); adjust the scan type check in `FeatureGeter_server.R` for other instrument methods
+- `.mzML` / `.mzXML` files: no scan-type hardcoding — MS1/MS2 are identified by `msLevel` metadata and precursor m/z is read directly from the file header
 
 ## License
 

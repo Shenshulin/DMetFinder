@@ -6,14 +6,21 @@
 
 ### Ms1Geter
 
-提取原始质谱数据（`.raw` 文件）中的 MS1 与 MS2 信息，并输出后续分析所需的中间文件。
+从质谱数据文件中提取 MS1 与 MS2 信息，并输出后续分析所需的中间文件。
+
+**支持的输入格式：**
+
+| 格式 | 读取方式 | 说明 |
+| --- | --- | --- |
+| `.raw`（Thermo） | `rawrr` | 需 Thermo RawFileReader .NET 库；通过扫描类型 `FTMS - p ESI Full ms [100.0000-1500.0000]` 识别 MS1 |
+| `.mzML` / `.mzXML` | `mzR` | 直接使用 `msLevel` / 母离子 m/z 元数据（无扫描类型硬编码）；profile 数据自动质心化；离子模式由 polarity 注解自动推断 |
 
 **输入：**
 
 | 输入项 | 说明 |
 | --- | --- |
-| 工作目录 | 存放 `.raw` 文件及结果输出的目录 |
-| 样本分组文件 | CSV 或 XLSX 格式，必须包含 `Sample`（样本名，与 `.raw` 文件名一致）和 `Group`（分组名）两列 |
+| 工作目录 | 存放 `.raw` / `.mzML` / `.mzXML` 文件及结果输出的目录 |
+| 样本分组文件 | CSV 或 XLSX 格式，必须包含 `Sample`（样本名，与质谱文件名一致）和 `Group`（分组名）两列 |
 
 **输出（写入工作目录）：**
 
@@ -55,7 +62,8 @@
 - Shiny 相关依赖包：
   - shiny、shinyFiles
   - readxl、dplyr、openxlsx、stringr、tools、data.table、purrr
-  - rawrr（需配套 Thermo RawFileReader 的 .NET 库）
+  - rawrr（需配套 Thermo RawFileReader 的 .NET 库）— 用于 `.raw` 文件
+  - mzR（Bioconductor，`BiocManager::install("mzR")`）— 用于 `.mzML` / `.mzXML` 文件
 
 ## 使用说明
 
@@ -85,5 +93,6 @@ shiny_app/
 ## 注意事项
 
 - 上传文件大小上限已设置为 100 MB（见 `app.R` 中的 `shiny.maxRequestSize`）。
-- 样本名需与 `.raw` 文件名保持一致（不含扩展名）。
-- Ms1Geter 当前针对特定扫描类型（`FTMS - p ESI Full ms [100.0000-1500.0000]`）编写，如需适配其他仪器方法请对应调整 `FeatureGeter_server.R` 中的扫描类型判断。
+- 样本名需与质谱数据文件名保持一致（不含扩展名）。
+- `.raw` 文件：Ms1Geter 当前针对特定扫描类型（`FTMS - p ESI Full ms [100.0000-1500.0000]`）编写，如需适配其他仪器方法请对应调整 `FeatureGeter_server.R` 中的扫描类型判断。
+- `.mzML` / `.mzXML` 文件：无扫描类型硬编码，通过 `msLevel` 元数据识别 MS1/MS2，母离子 m/z 直接取自文件头信息；处理此类文件需安装 `mzR`（`BiocManager::install("mzR")`）。
