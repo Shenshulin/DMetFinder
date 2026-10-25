@@ -458,6 +458,17 @@ FeatureGeter_server <- function(id){
     setwd(workdir)
     append_log(paste("工作目录设置为：", workdir))
 
+    # ----------------------------------------------------------
+    # 进度条（不是装饰，是保活机制）
+    # 整个流程写在同一个 observeEvent 里，是一次几十秒到几分钟的
+    # 同步调用。每次 prog$set() 都会把控制权交还事件循环一次，
+    # httpuv 才有机会发出 SockJS 心跳（客户端 25 s 收不到就盖灰罩）。
+    # 不加 Progress 时，页面必然在约 25 s 后变灰，而 R 毫无察觉。
+    # ----------------------------------------------------------
+    prog <- shiny::Progress$new(session, min = 0, max = 1)
+    on.exit(prog$close(), add = TRUE)
+    prog$set(value = 0, message = "MSGeter", detail = "读取样本分组…")
+
     #-----------------------------------------------------------
     # 1. 读取样本分组文件
     #-----------------------------------------------------------
@@ -498,12 +509,24 @@ FeatureGeter_server <- function(id){
     append_log(paste("检测到", length(ms_files), "个质谱文件（.raw/.mzML/.mzXML）。"))
     all_samples_data <- list()
     all_ms2_data <- list()
-    all_S <- list()
     ion_modes <- list()
 
-    for (msfile in ms_files) {
-      append_log(paste("正在处理：", basename(msfile)))
+    # MGF 不再等 20 个样品全读完再统一写。每处理完一个文件立即落盘，
+    # 然后释放该样品的完整谱图。原先的 all_S 会把所有 raw 的全部
+    # 谱图常驻内存（实测 20 个样品峰值 6.2 GB），而它唯一的用途
+    # 就是最后写 MGF，完全没必要攒着。
+    msp_dir <- "MS2_MGF"
+    dir.create(msp_dir, showWarnings = FALSE)
+    n_files <- length(ms_files)
+
+    for (k in seq_along(ms_files)) {
+      msfile <- ms_files[k]
+      append_log(paste0("正在处理（", k, "/", n_files, "）：", basename(msfile)))
       sample_id <- file_path_sans_ext(basename(msfile))
+      prog$set(
+        value  = 0.80 * (k - 1) / n_files,
+        detail = sprintf("读取 %d/%d：%s", k, n_files, sample_id)
+      )
 
       # guard: same sample name present in more than one format
       # (e.g. both P173.raw and P173.mzML) -> keep the first, skip the rest
@@ -516,8 +539,8 @@ FeatureGeter_server <- function(id){
       ms <- read_ms_file(msfile)
       st <- ms$scan_table
       spectra <- ms$spectra
-      all_S[[sample_id]] <- spectra
       ion_modes[[sample_id]] <- ms$ion_mode
+      prog$set(detail = sprintf("解析 %d/%d：%s", k, n_files, sample_id))
 
       # ---------------- MS2 扫描信息表 ----------------
       i_ms2 <- st %>%
@@ -594,76 +617,123 @@ FeatureGeter_server <- function(id){
       }
 
       all_samples_data[[sample_id]] <- subset_cleaned
+
+      # ---------------- 立即写 MGF，随后释放谱图 ----------------
+      sample_ion_mode <- ion_modes[[sample_id]]
+      ms2_df <- all_ms2_data[[sample_id]]
+      mgf_chunks <- vector("list", nrow(ms2_df))
+
+      for (i in seq_len(nrow(ms2_df))) {
+        scan_num <- ms2_df$scan[i]
+        spec <- spectra[[as.character(scan_num)]]
+        if (is.null(spec) || is.null(spec$mz) || is.null(spec$intensity)) next
+
+        mgf_chunks[[i]] <- c(
+          paste0("NAME:", sample_id, "_scan", scan_num),
+          paste0("PRECURSORMZ:", round(ms2_df$ms2_value[i], 4)),
+          paste0("IONMODE: ", sample_ion_mode),
+          paste0("RETENTIONTIME:", round(ms2_df$StartTime[i], 2)),
+          paste0("Num Peaks: ", length(spec$mz)),
+          paste(apply(cbind(spec$mz, spec$intensity), 1, paste, collapse = " "),
+                collapse = "\n"),
+          ""
+        )
+      }
+
+      # 无 MS2 谱时 unlist 得到 NULL，writeLines(NULL) 会直接报错，
+      # 这里显式退化成空字符向量（生成空 .msp，与原行为一致）
+      mgf_text <- unlist(mgf_chunks, use.names = FALSE)
+      if (is.null(mgf_text)) mgf_text <- character(0)
+      writeLines(mgf_text, file.path(msp_dir, paste0(sample_id, ".msp")))
+
+      # 谱图与去卷积中间态是每轮最大的对象，写完 MGF 立刻放掉；
+      # 否则 20 个样品的峰值会在收尾阶段叠到数 GB。
+      rm(ms, st, spectra, merged_centroids, cleaned_centroids,
+         mgf_chunks, ms2_df)
+      gc(verbose = FALSE)
+
+      prog$set(value = 0.80 * k / n_files)
     }
 
     #-----------------------------------------------------------
     # 3. 导出结果
     #-----------------------------------------------------------
-    combined_ms2 <- do.call(rbind, all_ms2_data)
-    write.csv(combined_ms2, "MS2_Group_Info.csv", row.names = FALSE)
-    append_log("✅ 已导出 MS2_Group_Info.csv")
-
-
-
-    output_dir <- "MS2_MGF"
-    dir.create(output_dir, showWarnings = FALSE)
-
-    for (sample_name in names(all_ms2_data)) {
-      message("Writing MGF for: ", sample_name)
-
-      ms2_df <- all_ms2_data[[sample_name]]
-      spectra_list <- all_S[[sample_name]]
-      sample_ion_mode <- ion_modes[[sample_name]]
-      mgf_lines <- c()
-
-      for (i in seq_len(nrow(ms2_df))) {
-        scan_num <- ms2_df$scan[i]
-        precursor_mz <- ms2_df$ms2_value[i]
-        rt <- ms2_df$StartTime[i] # 单位：分钟
-
-        spec <- spectra_list[[as.character(scan_num)]]
-        if (is.null(spec)) next
-        mz <- spec$mz
-        intensity <- spec$intensity
-        if (is.null(mz) || is.null(intensity)) next
-
-        block <- c(
-          paste0("NAME:", sample_name, "_scan", scan_num),
-          paste0("PRECURSORMZ:", round(precursor_mz, 4)),
-          paste0("IONMODE: ", sample_ion_mode),
-          paste0("RETENTIONTIME:", round(rt, 2)),
-          paste0("Num Peaks: ", length(mz)),
-          paste(apply(cbind(mz, intensity), 1, paste, collapse=" "), collapse = "\n"),
-          ""
-        )
-
-        mgf_lines <- c(mgf_lines, block)
-      }
-
-      writeLines(mgf_lines, file.path(output_dir, paste0(sample_name, ".msp")))
+    prog$set(value = 0.82, detail = "导出 MS2_Group_Info.csv")
+    if (length(all_ms2_data) > 0) {
+      combined_ms2 <- do.call(rbind, all_ms2_data)
+      write.csv(combined_ms2, "MS2_Group_Info.csv", row.names = FALSE)
+      append_log("✅ 已导出 MS2_Group_Info.csv")
+      rm(combined_ms2)
+    } else {
+      append_log("⚠️ 没有可导出的 MS2 扫描信息，跳过 MS2_Group_Info.csv")
     }
+    append_log(paste0("✅ 已写出 ", length(ion_modes), " 个 MGF 文件到 ", msp_dir, "/"))
 
 
 
+    # （MGF 已在主循环内逐样品写出，此处不再二次遍历）
+
+
+
+
+    # ----------------------------------------------------------
+    # Clean_MS1_Data_Group*.xlsx 的 Sample 列必须写纯数字。
+    # 下游 dmf_read_samples() 会对每个 6 列块的首行做 as.numeric()，
+    # 遇到 "P173" 得到 NA，整列判空后直接报"首行没有任何样品编号"。
+    # 只改这一列的输出值：all_samples_data 的 key（= 文件名）保持不变，
+    # MS2_Group_Info.csv 与 MGF 的 NAME 仍是原始文件名，便于追溯。
+    # 取"第一个连续数字串"：P173 -> 173，Sample_07 -> 07（保留前导零）。
+    # ----------------------------------------------------------
+    num_from_id <- function(id) {
+      m <- regmatches(id, regexpr("[0-9]+", id))
+      if (length(m) == 0L) NA_character_ else m[1]
+    }
+    sample_num <- vapply(names(all_samples_data), num_from_id,
+                         character(1), USE.NAMES = TRUE)
+
+    no_digit <- names(sample_num)[is.na(sample_num)]
+    if (length(no_digit) > 0L) {
+      append_log(paste("⚠️ 样品名里取不到数字，这些块将保留原名：",
+                       paste(no_digit, collapse = ", ")))
+    }
+    good_num <- sample_num[!is.na(sample_num)]
+    dup_num <- unique(good_num[duplicated(good_num)])
+    if (length(dup_num) > 0L) {
+      append_log(paste("⚠️ 转成纯数字后编号重复，下游会混淆：",
+                       paste(dup_num, collapse = ", ")))
+    }
 
     # 导出清洗后的 MS1 数据：按分组写入
     groups <- unique(sample_info$Group)
-    for (grp in groups) {
+    for (gi in seq_along(groups)) {
+      grp <- groups[gi]
+      prog$set(
+        value  = 0.85 + 0.14 * (gi - 1) / length(groups),
+        detail = sprintf("写 Excel %d/%d：Group %s", gi, length(groups), grp)
+      )
       grp_samples <- sample_info %>% filter(Group == grp) %>% pull(Sample)
       wb <- createWorkbook()
       addWorksheet(wb, paste0("Group_", grp, "_MS1"))
       col_start <- 1
+      written <- character(0)
       for (sample_id in grp_samples) {
         if (!sample_id %in% names(all_samples_data)) next
         df <- all_samples_data[[sample_id]]
+        nid <- sample_num[[sample_id]]
+        if (!is.na(nid) && nrow(df) > 0L) df$Sample <- rep(nid, nrow(df))
+        written <- c(written, if (is.na(nid)) sample_id else nid)
         writeData(wb, 1, df, startCol = col_start, startRow = 1)
         col_start <- col_start + ncol(df) + 1
       }
       out_file <- paste0("Clean_MS1_Data_Group", grp, ".xlsx")
       saveWorkbook(wb, out_file, overwrite = TRUE)
-      append_log(paste("✅ 已保存", out_file))
+      append_log(paste0("✅ 已保存 ", out_file, "（样品编号：",
+                        paste(written, collapse = ", "), "）"))
+      # openxlsx 的 workbook 在写出后仍持有整张表，逐组放掉
+      rm(wb); gc(verbose = FALSE)
     }
 
+    prog$set(value = 1, detail = "完成")
     output_files <- list.files(workdir, full.names = TRUE, recursive = TRUE)
     output$output_files <- renderTable({
       data.frame(

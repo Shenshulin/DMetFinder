@@ -1,0 +1,427 @@
+<svg width="820" height="1488" viewBox="0 0 820 1488" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+<title>Fig. 1 - Peak-centric versus spectral route</title>
+<desc>Panel (a): the peak-table route that this pipeline does not take - EIC extraction, chromatographic peak detection with area integration, peak table assembly and cross-sample alignment, drawn in grey. Panel (b): the spectral route. Each group contributes several raw files and one file is one sample. Scans of a sample are binned every minute; inside one bin every point is placed by m/z vertically and shaded by intensity; every point becomes one bar whose height is intensity, and bars below the intensity floor are dropped. Ions that recur across at least 50 percent of the files of a group form the candidate set; 80 percent is the bar for the comparison set. Every candidate is scored as intensity score times count score times relative-intensity score, the count score being deliberately inverted so that rarer ions score higher; the same three tables also score every ion of the run. Every ion is then checked for the heavy-isotope envelope: M+1, M+2 and M+3 are looked up at fixed mass offsets of 1.00335, 2.0067 and 3.01005 Da within the same minute, and only if the three successive abundance ratios fall inside the permitted window is the ion called an isotope of M and withheld from the differential list. Finally the 80 percent ion vectors of the two groups are laid on one shared RT and m/z grid: positions carried by both groups are shared ions ranked by their intensity ratio, positions carried by only one group are the differential ions, and the isotope flag travels with every row of the output table.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="0" y="0" width="820" height="1488" fill="#FFFFFF"/>
+
+<!-- ===================== panel (a) ===================== -->
+<rect x="40" y="48" width="740" height="152" rx="12" fill="#F6F5F1" stroke="#C9C6BC" stroke-width="0.5" stroke-dasharray="3 3"/>
+<text x="56" y="70" font-size="14" font-weight="500" fill="#8A8880">(a) Peak-centric route &#8212; not used</text>
+
+<g transform="translate(74,0)">
+<rect x="44" y="112" width="60" height="44" fill="none" stroke="#8A8880" stroke-width="1"/>
+<path d="M44 112 L64 100 L124 100 L104 112 Z" fill="none" stroke="#8A8880" stroke-width="1"/>
+<path d="M104 112 L124 100 L124 144 L104 156 Z" fill="none" stroke="#8A8880" stroke-width="1"/>
+
+<line x1="140" y1="140" x2="230" y2="140" stroke="#8A8880" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="177" y1="132" x2="193" y2="148" stroke="#5F5E5A" stroke-width="1.8"/>
+<line x1="177" y1="148" x2="193" y2="132" stroke="#5F5E5A" stroke-width="1.8"/>
+<text x="185" y="164" font-size="11" text-anchor="middle" fill="#5F5E5A">no EIC</text>
+
+<path d="M300 156 L306 148 L312 120 L318 104 L324 120 L330 148 L338 155 L338 156 Z" fill="#E8E6DE"/>
+<path d="M236 156 L246 155 L252 150 L258 128 L264 108 L270 128 L276 150 L284 155 L292 156 L300 155 L306 148 L312 120 L318 104 L324 120 L330 148 L338 155 L346 156 L396 156" fill="none" stroke="#8A8880" stroke-width="1"/>
+<line x1="300" y1="156" x2="300" y2="116" stroke="#8A8880" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="340" y1="156" x2="340" y2="116" stroke="#8A8880" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<line x1="402" y1="140" x2="418" y2="140" stroke="#8A8880" stroke-width="1" marker-end="url(#arrow)"/>
+
+<rect x="424" y="112" width="96" height="44" fill="none" stroke="#8A8880" stroke-width="1"/>
+<rect x="424" y="112" width="96" height="11" fill="#E8E6DE"/>
+<line x1="424" y1="123" x2="520" y2="123" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="424" y1="134" x2="520" y2="134" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="424" y1="145" x2="520" y2="145" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="452" y1="112" x2="452" y2="156" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="480" y1="112" x2="480" y2="156" stroke="#8A8880" stroke-width="0.5"/>
+
+<line x1="526" y1="140" x2="552" y2="140" stroke="#8A8880" stroke-width="1" marker-end="url(#arrow)"/>
+
+<line x1="556" y1="124" x2="636" y2="124" stroke="#8A8880" stroke-width="1"/>
+<line x1="556" y1="146" x2="636" y2="146" stroke="#8A8880" stroke-width="1"/>
+<line x1="566" y1="118" x2="566" y2="124" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="592" y1="118" x2="592" y2="124" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="618" y1="118" x2="618" y2="124" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="570" y1="146" x2="570" y2="152" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="588" y1="146" x2="588" y2="152" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="614" y1="146" x2="614" y2="152" stroke="#8A8880" stroke-width="1.5"/>
+<line x1="566" y1="124" x2="570" y2="146" stroke="#8A8880" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="592" y1="124" x2="588" y2="146" stroke="#8A8880" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="618" y1="124" x2="614" y2="146" stroke="#8A8880" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<text x="84" y="178" font-size="11" text-anchor="middle" fill="#8A8880">LC-MS data cube</text>
+<text x="316" y="178" font-size="11" text-anchor="middle" fill="#8A8880">EIC + peak area</text>
+<text x="472" y="178" font-size="11" text-anchor="middle" fill="#8A8880">peak table</text>
+<text x="596" y="178" font-size="11" text-anchor="middle" fill="#8A8880">peak alignment</text>
+</g>
+
+<!-- ===================== panel (b) ===================== -->
+<rect x="40" y="216" width="740" height="1234" rx="12" fill="#FFFFFF" stroke="#378ADD" stroke-width="0.5"/>
+<text x="56" y="240" font-size="14" font-weight="500" fill="#185FA5">(b) Spectral route &#8212; this work</text>
+<text x="764" y="240" font-size="11" text-anchor="end"><tspan fill="#185FA5">MSGeter</tspan><tspan fill="#8A8880"> (blue) &#183; </tspan><tspan fill="#0F6E56">DMetFinder</tspan><tspan fill="#8A8880"> (green)</tspan></text>
+
+<!-- stage 1: raw files, two groups -->
+<rect x="191" y="297" width="58" height="36" fill="#F4F9FE" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="186" y="292" width="58" height="36" fill="#F7FBFE" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="181" y="287" width="58" height="36" fill="#FAFCFF" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="176" y="282" width="58" height="36" fill="#FFFFFF" stroke="#378ADD" stroke-width="0.75"/>
+<rect x="176" y="282" width="58" height="8" fill="#EAF3FB"/>
+<line x1="181" y1="299" x2="229" y2="299" stroke="#B5D4F4" stroke-width="0.5"/>
+<line x1="181" y1="307" x2="229" y2="307" stroke="#B5D4F4" stroke-width="0.5"/>
+<line x1="181" y1="315" x2="216" y2="315" stroke="#B5D4F4" stroke-width="0.5"/>
+
+<rect x="573" y="297" width="58" height="36" fill="#F4F9FE" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="568" y="292" width="58" height="36" fill="#F7FBFE" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="563" y="287" width="58" height="36" fill="#FAFCFF" stroke="#B5D4F4" stroke-width="0.5"/>
+<rect x="558" y="282" width="58" height="36" fill="#FFFFFF" stroke="#378ADD" stroke-width="0.75"/>
+<rect x="558" y="282" width="58" height="8" fill="#EAF3FB"/>
+<line x1="563" y1="299" x2="611" y2="299" stroke="#B5D4F4" stroke-width="0.5"/>
+<line x1="563" y1="307" x2="611" y2="307" stroke="#B5D4F4" stroke-width="0.5"/>
+<line x1="563" y1="315" x2="598" y2="315" stroke="#B5D4F4" stroke-width="0.5"/>
+
+<text x="212" y="350" font-size="11" text-anchor="middle" fill="#5F5E5A">group A &#183; 4 files</text>
+<text x="594" y="350" font-size="11" text-anchor="middle" fill="#5F5E5A">group B &#183; 4 files</text>
+
+<text x="402" y="300" font-size="12" font-weight="500" text-anchor="middle" fill="#2C2C2A">one file = one sample</text>
+<text x="402" y="317" font-size="11" text-anchor="middle" fill="#5F5E5A">every sample handled identically</text>
+<line x1="402" y1="332" x2="402" y2="374" stroke="#378ADD" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- stage 2: minute binning -->
+<text x="204" y="398" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">scans binned by minute</text>
+<text x="204" y="414" font-size="11" text-anchor="middle" fill="#5F5E5A">floor(RT) &#8594; one bin per minute</text>
+
+<rect x="278" y="424" width="74" height="82" fill="#EAF3FB"/>
+<rect x="56" y="424" width="296" height="82" fill="none" stroke="#B5D4F4" stroke-width="0.5"/>
+<line x1="130" y1="424" x2="130" y2="506" stroke="#B5D4F4" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="204" y1="424" x2="204" y2="506" stroke="#B5D4F4" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="278" y1="424" x2="278" y2="506" stroke="#B5D4F4" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<circle cx="66" cy="436" r="1.8" fill="#8FBFE8"/>
+<circle cx="78" cy="458" r="1.8" fill="#C9DFF5"/>
+<circle cx="90" cy="432" r="1.8" fill="#4A8FCB"/>
+<circle cx="100" cy="478" r="1.8" fill="#C9DFF5"/>
+<circle cx="110" cy="444" r="1.8" fill="#1F5F96"/>
+<circle cx="122" cy="470" r="1.8" fill="#8FBFE8"/>
+<circle cx="72" cy="492" r="1.8" fill="#C9DFF5"/>
+
+<circle cx="140" cy="434" r="1.8" fill="#C9DFF5"/>
+<circle cx="150" cy="452" r="1.8" fill="#4A8FCB"/>
+<circle cx="162" cy="472" r="1.8" fill="#C9DFF5"/>
+<circle cx="172" cy="438" r="1.8" fill="#8FBFE8"/>
+<circle cx="184" cy="486" r="1.8" fill="#C9DFF5"/>
+<circle cx="194" cy="456" r="1.8" fill="#1F5F96"/>
+<circle cx="146" cy="494" r="1.8" fill="#C9DFF5"/>
+
+<circle cx="212" cy="440" r="1.8" fill="#8FBFE8"/>
+<circle cx="222" cy="466" r="1.8" fill="#C9DFF5"/>
+<circle cx="234" cy="434" r="1.8" fill="#4A8FCB"/>
+<circle cx="246" cy="480" r="1.8" fill="#C9DFF5"/>
+<circle cx="258" cy="452" r="1.8" fill="#1F5F96"/>
+<circle cx="268" cy="474" r="1.8" fill="#8FBFE8"/>
+
+<circle cx="288" cy="442" r="1.8" fill="#8FBFE8"/>
+<circle cx="298" cy="462" r="1.8" fill="#C9DFF5"/>
+<circle cx="310" cy="436" r="1.8" fill="#1F5F96"/>
+<circle cx="322" cy="478" r="1.8" fill="#C9DFF5"/>
+<circle cx="334" cy="450" r="1.8" fill="#4A8FCB"/>
+<circle cx="344" cy="470" r="1.8" fill="#8FBFE8"/>
+<circle cx="292" cy="496" r="1.8" fill="#C9DFF5"/>
+
+<line x1="56" y1="506" x2="352" y2="506" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="130" y1="506" x2="130" y2="510" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="204" y1="506" x2="204" y2="510" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="278" y1="506" x2="278" y2="510" stroke="#8A8880" stroke-width="0.5"/>
+<text x="204" y="524" font-size="11" text-anchor="middle" fill="#5F5E5A">RT (min)</text>
+
+<line x1="358" y1="465" x2="466" y2="465" stroke="#378ADD" stroke-width="0.75" marker-end="url(#arrow)"/>
+
+<!-- stage 3: inside one bin -->
+<text x="617" y="398" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">inside one bin</text>
+<text x="617" y="414" font-size="11" text-anchor="middle" fill="#5F5E5A">y = m/z &#183; darker = stronger</text>
+
+<rect x="470" y="424" width="294" height="82" fill="#FFFFFF" stroke="#378ADD" stroke-width="0.75"/>
+<line x1="500" y1="500" x2="500" y2="432" stroke="#378ADD" stroke-width="0.75" marker-end="url(#arrow)"/>
+<text x="494" y="432" font-size="10" text-anchor="end" fill="#185FA5">m/z</text>
+
+<circle cx="516" cy="440" r="2.4" fill="#C9DFF5"/>
+<circle cx="536" cy="458" r="2.4" fill="#8FBFE8"/>
+<circle cx="556" cy="436" r="2.4" fill="#1F5F96"/>
+<circle cx="576" cy="472" r="2.4" fill="#C9DFF5"/>
+<circle cx="596" cy="448" r="2.4" fill="#4A8FCB"/>
+<circle cx="616" cy="486" r="2.4" fill="#C9DFF5"/>
+<circle cx="636" cy="440" r="2.4" fill="#8FBFE8"/>
+<circle cx="656" cy="464" r="2.4" fill="#1F5F96"/>
+<circle cx="676" cy="480" r="2.4" fill="#C9DFF5"/>
+<circle cx="696" cy="452" r="2.4" fill="#4A8FCB"/>
+<circle cx="716" cy="470" r="2.4" fill="#C9DFF5"/>
+<circle cx="736" cy="438" r="2.4" fill="#8FBFE8"/>
+<circle cx="546" cy="492" r="2.4" fill="#C9DFF5"/>
+<circle cx="606" cy="438" r="2.4" fill="#8FBFE8"/>
+<circle cx="686" cy="434" r="2.4" fill="#C9DFF5"/>
+<circle cx="746" cy="478" r="2.4" fill="#4A8FCB"/>
+
+<!-- stage 4: bars + intensity floor -->
+<text x="390" y="548" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">one bar per RT &#38; m/z</text>
+<text x="390" y="564" font-size="11" text-anchor="middle" fill="#5F5E5A">height = intensity &#183; dashed bars fall below the floor and are dropped</text>
+
+<line x1="56" y1="660" x2="724" y2="660" stroke="#8A8880" stroke-width="0.5"/>
+
+<line x1="66" y1="660" x2="66" y2="578" stroke="#378ADD" stroke-width="14"/>
+<line x1="108" y1="660" x2="108" y2="598" stroke="#378ADD" stroke-width="14"/>
+<rect x="143" y="640" width="14" height="20" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="150" y1="660" x2="150" y2="640" stroke="none"/>
+<line x1="192" y1="660" x2="192" y2="586" stroke="#378ADD" stroke-width="14"/>
+<line x1="234" y1="660" x2="234" y2="610" stroke="#378ADD" stroke-width="14"/>
+<line x1="276" y1="660" x2="276" y2="594" stroke="#185FA5" stroke-width="14"/>
+<line x1="318" y1="660" x2="318" y2="602" stroke="#378ADD" stroke-width="14"/>
+<rect x="353" y="636" width="14" height="24" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="402" y1="660" x2="402" y2="580" stroke="#185FA5" stroke-width="14"/>
+<line x1="444" y1="660" x2="444" y2="606" stroke="#378ADD" stroke-width="14"/>
+<line x1="486" y1="660" x2="486" y2="596" stroke="#378ADD" stroke-width="14"/>
+<rect x="521" y="638" width="14" height="22" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="570" y1="660" x2="570" y2="588" stroke="#185FA5" stroke-width="14"/>
+<line x1="612" y1="660" x2="612" y2="614" stroke="#378ADD" stroke-width="14"/>
+<line x1="654" y1="660" x2="654" y2="600" stroke="#378ADD" stroke-width="14"/>
+<line x1="696" y1="660" x2="696" y2="582" stroke="#378ADD" stroke-width="14"/>
+
+<line x1="56" y1="622" x2="724" y2="622" stroke="#5F5E5A" stroke-width="0.75" stroke-dasharray="4 3"/>
+<text x="730" y="626" font-size="10" fill="#5F5E5A">10&#8308;</text>
+
+<line x1="390" y1="668" x2="390" y2="692" stroke="#1D9E75" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- stage 5: align within group -->
+<text x="218" y="690" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">align within group</text>
+<text x="218" y="706" font-size="11" text-anchor="middle" fill="#5F5E5A">only ions that recur across files survive</text>
+
+<line x1="74" y1="780" x2="146" y2="780" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="80" y1="780" x2="80" y2="724" stroke="#1D9E75" stroke-width="10"/>
+<line x1="96" y1="780" x2="96" y2="740" stroke="#1D9E75" stroke-width="10"/>
+<line x1="112" y1="780" x2="112" y2="756" stroke="#1D9E75" stroke-width="10"/>
+<rect x="128" y="762" width="10" height="18" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<line x1="174" y1="780" x2="228" y2="780" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="180" y1="780" x2="180" y2="724" stroke="#1D9E75" stroke-width="10"/>
+<line x1="196" y1="780" x2="196" y2="740" stroke="#1D9E75" stroke-width="10"/>
+<line x1="212" y1="780" x2="212" y2="756" stroke="#1D9E75" stroke-width="10"/>
+
+<line x1="256" y1="780" x2="310" y2="780" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="262" y1="780" x2="262" y2="724" stroke="#1D9E75" stroke-width="10"/>
+<line x1="278" y1="780" x2="278" y2="740" stroke="#1D9E75" stroke-width="10"/>
+<line x1="294" y1="780" x2="294" y2="756" stroke="#1D9E75" stroke-width="10"/>
+
+<line x1="316" y1="752" x2="328" y2="752" stroke="#8A8880" stroke-width="1" marker-end="url(#arrow)"/>
+
+<line x1="338" y1="780" x2="398" y2="780" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="344" y1="780" x2="344" y2="724" stroke="#0F6E56" stroke-width="12"/>
+<line x1="362" y1="780" x2="362" y2="740" stroke="#0F6E56" stroke-width="12"/>
+<line x1="380" y1="780" x2="380" y2="756" stroke="#0F6E56" stroke-width="12"/>
+
+<line x1="80" y1="724" x2="350" y2="724" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="96" y1="740" x2="368" y2="740" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="112" y1="756" x2="386" y2="756" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<text x="110" y="796" font-size="11" text-anchor="middle" fill="#5F5E5A">S1</text>
+<text x="201" y="796" font-size="11" text-anchor="middle" fill="#5F5E5A">S2</text>
+<text x="283" y="796" font-size="11" text-anchor="middle" fill="#5F5E5A">S3</text>
+<text x="368" y="796" font-size="11" text-anchor="middle" fill="#0F6E56">shared</text>
+
+<text x="446" y="690" font-size="11" fill="#2C2C2A">two thresholds, two jobs</text>
+<circle cx="446" cy="722" r="2.5" fill="#8A8880"/>
+<text x="458" y="726" font-size="11" fill="#5F5E5A">50% of files &#8594; candidate ions</text>
+<circle cx="446" cy="750" r="2.5" fill="#0F6E56"/>
+<text x="458" y="754" font-size="11" fill="#5F5E5A">80% of files &#8594; ions compared</text>
+<text x="458" y="778" font-size="10.5" fill="#8A8880">candidates are the set that gets scored</text>
+
+<line x1="410" y1="800" x2="410" y2="820" stroke="#1D9E75" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- stage 6: ion scoring -->
+<text x="410" y="834" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">score every candidate ion</text>
+<text x="410" y="850" font-size="11" text-anchor="middle" fill="#5F5E5A">total = intensity &#215; count &#215; relative intensity &#183; the same three tables also score every ion of the run</text>
+
+<text x="71" y="872" font-size="11" fill="#2C2C2A">intensity</text>
+<text x="235" y="872" font-size="10" text-anchor="end" fill="#8A8880">1 &#8594; 10</text>
+<line x1="56" y1="880" x2="250" y2="880" stroke="#DEDBD0" stroke-width="0.5"/>
+<line x1="56" y1="926" x2="250" y2="926" stroke="#8A8880" stroke-width="0.5"/>
+<rect x="71" y="916" width="18" height="10" fill="#C9DFF5"/>
+<rect x="95" y="913" width="18" height="13" fill="#A8CFEF"/>
+<rect x="119" y="902" width="18" height="24" fill="#8FBFE8"/>
+<rect x="143" y="898" width="18" height="28" fill="#6BA6DC"/>
+<rect x="167" y="891" width="18" height="35" fill="#4A8FCB"/>
+<rect x="191" y="888" width="18" height="38" fill="#2A74AE"/>
+<rect x="215" y="884" width="18" height="42" fill="#185FA5"/>
+<text x="80" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">0</text>
+<text x="128" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">10k</text>
+<text x="224" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">1M</text>
+
+<text x="258" y="910" font-size="15" text-anchor="middle" fill="#8A8880">&#215;</text>
+
+<text x="281" y="872" font-size="11" fill="#2C2C2A">bins (inverted)</text>
+<text x="445" y="872" font-size="10" text-anchor="end" fill="#8A8880">10 &#8594; 1</text>
+<line x1="266" y1="880" x2="460" y2="880" stroke="#DEDBD0" stroke-width="0.5"/>
+<line x1="266" y1="926" x2="460" y2="926" stroke="#8A8880" stroke-width="0.5"/>
+<rect x="281" y="884" width="28" height="42" fill="#0F6E56"/>
+<rect x="323" y="909" width="28" height="17" fill="#3FA98A"/>
+<rect x="365" y="913" width="28" height="13" fill="#7FC9B4"/>
+<rect x="407" y="916" width="28" height="10" fill="#C9E8DE"/>
+<text x="295" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">1</text>
+<text x="337" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">3</text>
+<text x="379" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">5</text>
+<text x="421" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">10+</text>
+
+<text x="468" y="910" font-size="15" text-anchor="middle" fill="#8A8880">&#215;</text>
+
+<text x="491" y="872" font-size="11" fill="#2C2C2A">relative intensity</text>
+<text x="655" y="872" font-size="10" text-anchor="end" fill="#8A8880">0.5 &#8594; 10</text>
+<line x1="476" y1="880" x2="670" y2="880" stroke="#DEDBD0" stroke-width="0.5"/>
+<line x1="476" y1="926" x2="670" y2="926" stroke="#8A8880" stroke-width="0.5"/>
+<rect x="491" y="918" width="20" height="8" fill="#C9DFF5"/>
+<rect x="519" y="916" width="20" height="10" fill="#A8CFEF"/>
+<rect x="547" y="913" width="20" height="13" fill="#8FBFE8"/>
+<rect x="575" y="909" width="20" height="17" fill="#6BA6DC"/>
+<rect x="603" y="902" width="20" height="24" fill="#4A8FCB"/>
+<rect x="631" y="884" width="20" height="42" fill="#185FA5"/>
+<text x="501" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">0</text>
+<text x="557" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">2</text>
+<text x="641" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">5</text>
+
+<text x="678" y="910" font-size="15" text-anchor="middle" fill="#8A8880">=</text>
+<text x="709" y="872" font-size="11" text-anchor="middle" fill="#0F6E56">total</text>
+<rect x="700" y="884" width="18" height="42" fill="#0F6E56"/>
+<text x="709" y="936" font-size="8.5" text-anchor="middle" fill="#8A8880">0.5&#8211;1000</text>
+
+<text x="410" y="950" font-size="10.5" text-anchor="middle" fill="#5F5E5A">count = how many of the 18 minute bins carry this m/z in one sample; inverted, so 1&#8211;2 bins score 10 and &#8805;10 bins score 1</text>
+
+<line x1="410" y1="956" x2="410" y2="970" stroke="#1D9E75" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- stage 7: isotope check -->
+<text x="410" y="984" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">isotope check on every ion</text>
+<text x="410" y="1000" font-size="11" text-anchor="middle" fill="#5F5E5A">M+1, M+2 and M+3 are searched at three fixed mass offsets in the same minute</text>
+
+<text x="56" y="1016" font-size="10.5" fill="#5F5E5A">one ion at m/z M</text>
+<line x1="84" y1="1026" x2="216" y2="1026" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="84" y1="1026" x2="84" y2="1034" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="216" y1="1026" x2="216" y2="1034" stroke="#8A8880" stroke-width="0.5"/>
+
+<line x1="56" y1="1090" x2="352" y2="1090" stroke="#8A8880" stroke-width="0.5"/>
+<text x="356" y="1088" font-size="8.5" fill="#8A8880">m/z</text>
+<line x1="84" y1="1090" x2="84" y2="1040" stroke="#0F6E56" stroke-width="7"/>
+<line x1="128" y1="1090" x2="128" y2="1062" stroke="#1D9E75" stroke-width="7"/>
+<line x1="172" y1="1090" x2="172" y2="1074" stroke="#3FA98A" stroke-width="7"/>
+<line x1="216" y1="1090" x2="216" y2="1083" stroke="#7FC9B4" stroke-width="7"/>
+<line x1="288" y1="1090" x2="288" y2="1054" stroke="#DEDBD0" stroke-width="7"/>
+
+<text x="84" y="1104" font-size="10" text-anchor="middle" fill="#0F6E56">M</text>
+<text x="128" y="1104" font-size="10" text-anchor="middle" fill="#1D9E75">M+1</text>
+<text x="172" y="1104" font-size="10" text-anchor="middle" fill="#5F5E5A">M+2</text>
+<text x="216" y="1104" font-size="10" text-anchor="middle" fill="#5F5E5A">M+3</text>
+<text x="288" y="1104" font-size="10" text-anchor="middle" fill="#8A8880">other</text>
+
+<text x="128" y="1116" font-size="8.5" text-anchor="middle" fill="#8A8880">+1.00335</text>
+<text x="172" y="1116" font-size="8.5" text-anchor="middle" fill="#8A8880">+2.00670</text>
+<text x="216" y="1116" font-size="8.5" text-anchor="middle" fill="#8A8880">+3.01005</text>
+<text x="288" y="1116" font-size="8.5" text-anchor="middle" fill="#8A8880">no offset</text>
+
+<text x="392" y="1016" font-size="10.5" fill="#5F5E5A">abundance gate, m/z 100&#8211;1000</text>
+
+<text x="392" y="1044" font-size="10.5" fill="#2C2C2A">M / M+1</text>
+<text x="512" y="1044" font-size="10.5" fill="#5F5E5A">1 &#8211; 50</text>
+<text x="764" y="1044" font-size="10.5" text-anchor="end" fill="#0F6E56">M+1 is an isotope</text>
+<line x1="392" y1="1056" x2="764" y2="1056" stroke="#EDEBE3" stroke-width="0.5"/>
+
+<text x="392" y="1072" font-size="10.5" fill="#2C2C2A">M+1 / M+2</text>
+<text x="512" y="1072" font-size="10.5" fill="#5F5E5A">&gt; 1 and 1 &#8211; 100</text>
+<text x="764" y="1072" font-size="10.5" text-anchor="end" fill="#0F6E56">M+2 is an isotope</text>
+<line x1="392" y1="1084" x2="764" y2="1084" stroke="#EDEBE3" stroke-width="0.5"/>
+
+<text x="392" y="1100" font-size="10.5" fill="#2C2C2A">M+2 / M+3</text>
+<text x="512" y="1100" font-size="10.5" fill="#5F5E5A">&gt; 1 and 1 &#8211; 100</text>
+<text x="764" y="1100" font-size="10.5" text-anchor="end" fill="#0F6E56">M+3 is an isotope</text>
+
+<text x="392" y="1120" font-size="9" fill="#8A8880">for m/z &#8805; 1000 the window is 0.5 &#8211; 5</text>
+
+<text x="392" y="1142" font-size="10.5" fill="#2C2C2A">a gated ion is a heavy isotope, not a new feature;</text>
+<text x="392" y="1156" font-size="10.5" fill="#2C2C2A">the flag is carried into every row of the table below</text>
+
+<line x1="410" y1="1168" x2="410" y2="1186" stroke="#1D9E75" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- stage 8: differential ions -->
+<text x="410" y="1200" font-size="13" font-weight="500" text-anchor="middle" fill="#2C2C2A">identify differential ions between groups</text>
+<text x="410" y="1216" font-size="11" text-anchor="middle" fill="#5F5E5A">both group vectors on one RT &#38; m/z grid; the table is written in both directions</text>
+
+<line x1="56" y1="1268" x2="344" y2="1268" stroke="#8A8880" stroke-width="0.5"/>
+<line x1="56" y1="1328" x2="344" y2="1328" stroke="#8A8880" stroke-width="0.5"/>
+
+<text x="62" y="1264" font-size="9.5" fill="#0F6E56">A</text>
+<text x="62" y="1324" font-size="9.5" fill="#0F6E56">B</text>
+
+<line x1="96" y1="1268" x2="96" y2="1310" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="192" y1="1268" x2="192" y2="1306" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="288" y1="1268" x2="288" y2="1314" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="2 2"/>
+
+<rect x="90" y="1236" width="12" height="32" fill="#1D9E75"/>
+<rect x="138" y="1244" width="12" height="24" fill="#1D9E75"/>
+<rect x="186" y="1250" width="12" height="18" fill="#1D9E75"/>
+<rect x="234" y="1260" width="12" height="8" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.4" stroke-dasharray="2 2"/>
+<rect x="282" y="1246" width="12" height="22" fill="#1D9E75"/>
+
+<rect x="90" y="1310" width="12" height="18" fill="#1D9E75"/>
+<rect x="138" y="1320" width="12" height="8" fill="#F0EEE7" stroke="#C9C6BC" stroke-width="0.4" stroke-dasharray="2 2"/>
+<rect x="186" y="1306" width="12" height="22" fill="#1D9E75"/>
+<rect x="234" y="1300" width="12" height="28" fill="#1D9E75"/>
+<rect x="282" y="1314" width="12" height="14" fill="#1D9E75"/>
+
+<text x="96" y="1350" font-size="9.5" text-anchor="middle" fill="#8A8880">shared</text>
+<text x="144" y="1350" font-size="9.5" font-weight="500" text-anchor="middle" fill="#0F6E56">A only</text>
+<text x="192" y="1350" font-size="9.5" text-anchor="middle" fill="#8A8880">shared</text>
+<text x="240" y="1350" font-size="9.5" font-weight="500" text-anchor="middle" fill="#0F6E56">B only</text>
+<text x="288" y="1350" font-size="9.5" text-anchor="middle" fill="#8A8880">shared</text>
+
+<text x="56" y="1372" font-size="10" fill="#5F5E5A">paired when the minute matches and |&#916;m/z| &#8804; 0.003</text>
+<text x="56" y="1386" font-size="10" fill="#5F5E5A">dashed tile = no ion there; B-only rows go to the mirror sheet</text>
+
+<line x1="352" y1="1298" x2="418" y2="1298" stroke="#1D9E75" stroke-width="1" marker-end="url(#arrow)"/>
+
+<text x="430" y="1246" font-size="10" fill="#2C2C2A">differential ion table &#183; one row per 80% ion of A</text>
+<text x="434" y="1266" font-size="8.5" fill="#8A8880">m/z</text>
+<text x="506" y="1266" font-size="8.5" fill="#8A8880">count A/B</text>
+<text x="580" y="1266" font-size="8.5" fill="#8A8880">avg A/B</text>
+<text x="634" y="1266" font-size="8.5" fill="#8A8880">M+1</text>
+<text x="668" y="1266" font-size="8.5" fill="#8A8880">call</text>
+<line x1="430" y1="1272" x2="764" y2="1272" stroke="#C9C6BC" stroke-width="0.5"/>
+
+<rect x="430" y="1281" width="334" height="15" fill="#F2FAF7"/>
+<text x="434" y="1290" font-size="9" fill="#2C2C2A">267.1231</text>
+<text x="506" y="1290" font-size="9" fill="#5F5E5A">9 / 0</text>
+<text x="580" y="1290" font-size="9" fill="#5F5E5A">0</text>
+<text x="634" y="1290" font-size="9" fill="#8A8880">&#8211;</text>
+<text x="668" y="1290" font-size="9" font-weight="500" fill="#0F6E56">A only</text>
+<text x="434" y="1308" font-size="9" fill="#2C2C2A">214.0864</text>
+<text x="506" y="1308" font-size="9" fill="#5F5E5A">8 / 8</text>
+<text x="580" y="1308" font-size="9" fill="#5F5E5A">1.9</text>
+<text x="634" y="1308" font-size="9" fill="#8A8880">&#8211;</text>
+<text x="668" y="1308" font-size="9" fill="#5F5E5A">shared</text>
+<text x="434" y="1326" font-size="9" fill="#2C2C2A">219.0899</text>
+<text x="506" y="1326" font-size="9" fill="#5F5E5A">8 / 8</text>
+<text x="580" y="1326" font-size="9" fill="#5F5E5A">2.1</text>
+<text x="634" y="1326" font-size="9" fill="#0F6E56">1</text>
+<text x="668" y="1326" font-size="9" fill="#8A8880">flagged isotope</text>
+<text x="434" y="1344" font-size="9" fill="#2C2C2A">301.1077</text>
+<text x="506" y="1344" font-size="9" fill="#5F5E5A">7 / 7</text>
+<text x="580" y="1344" font-size="9" fill="#5F5E5A">0.8</text>
+<text x="634" y="1344" font-size="9" fill="#8A8880">&#8211;</text>
+<text x="668" y="1344" font-size="9" fill="#5F5E5A">shared</text>
+<text x="434" y="1362" font-size="9" fill="#2C2C2A">336.1590</text>
+<text x="506" y="1362" font-size="9" fill="#5F5E5A">5 / 5</text>
+<text x="580" y="1362" font-size="9" fill="#5F5E5A">3.4</text>
+<text x="634" y="1362" font-size="9" fill="#8A8880">&#8211;</text>
+<text x="668" y="1362" font-size="9" fill="#5F5E5A">shared</text>
+
+<text x="430" y="1382" font-size="9" fill="#8A8880">count = files of the group carrying the ion</text>
+<text x="430" y="1394" font-size="9" fill="#8A8880">avg A/B = mean intensity ratio &#183; 0 = partner missing</text>
+<text x="430" y="1406" font-size="9" fill="#8A8880">the call uses presence and abundance only; scores do not enter it</text>
+
+<text x="410" y="1436" font-size="12" text-anchor="middle" fill="#2C2C2A">every ion keeps its m/z and its minute &#8212; no chromatographic peak is ever built</text>
+</svg>

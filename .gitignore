@@ -1,12 +1,33 @@
 # ---- AI assistant / local working data (not part of the application) ----
 .workbuddy/
 
+# ---- DNN reference tree: build artefacts, not source ----
+# Downloaded wheels are 335 MB of third-party binaries; the venv lives outside
+# the project entirely (see DNN_reference/.venv_path).
+DNN_reference/_wheels/
+DNN_reference/.venv/
+# The 25 MB training archive is reproducible from MassIVE MSV000084186; its
+# URL, size and SHA-256 are recorded in DNN_reference/DATA_MANIFEST.csv.
+DNN_reference/source_data/*.mat
+# Per-run outputs; the frozen model and its log ARE tracked.
+DNN_reference/processed_data/
+# Machine-local pointer to the analysis venv (C:/Users/<user>/pqdnn-venv).
+DNN_reference/.venv_path
+
+# ---- Paper bundle: the zip is the artefact, not its extraction ----
+# data_for_paper/DMetFinder1.0.3.zip is tracked; unpacking it yields a full
+# Windows JRE (183 files, 289 MB) that duplicates the archive contents.
+data_for_paper/DMetFinder1.0.3/
+
 # ---- R session and project artefacts ----
 .Rproj.user/
 .Rhistory
 .RData
 .Ruserdata
 *.Rproj
+# Machine-local pointer to the isolated CPC library (C:/rlib/cpc).
+# Recipe: .workbuddy/tools/install_cpc.R ; the path differs per machine.
+.Renviron
 
 # ---- OS / editor noise ----
 .DS_Store

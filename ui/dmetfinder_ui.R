@@ -6,6 +6,22 @@
 # All input and output ids are unchanged.
 # ============================================================
 
+# 把数值向量渲染成 "a,b,c" 形式的默认值文本。
+#
+# 直接用 paste(x, collapse = ",") 会走 as.character()，1e5 之类的值会被
+# 显示成 "1e+05"，界面上看似科学计数法、容易让人怀疑参数被改过。
+# 这里逐元素用定点表示（不出现指数），并去掉多余的尾随零。
+# digits = 15 是为了避免 1234567.891 被默认的 7 位有效数字截断。
+dmf_numlist <- function(x) {
+  x <- as.numeric(x)
+  out <- vapply(x, function(v) {
+    if (!is.finite(v)) return(as.character(v))
+    trimws(format(v, scientific = FALSE, trim = TRUE, drop0trailing = TRUE,
+                  digits = 15))
+  }, character(1), USE.NAMES = FALSE)
+  paste(out, collapse = ",")
+}
+
 dmetfinder_ui <- fluidPage(
   hero_panel(
     title     = "DMetFinder",
@@ -82,17 +98,17 @@ dmetfinder_ui <- fluidPage(
         column(6,
           card_panel("Intensity Scoring", "chart-simple",
             textInput("intensityRange", "Intensity Ranges (comma-separated)",
-                     value = paste(default_config$intensityRange, collapse = ",")),
+                     value = dmf_numlist(default_config$intensityRange)),
             textInput("intensityValue", "Intensity Scores (comma-separated)",
-                     value = paste(default_config$intensityValue, collapse = ","))
+                     value = dmf_numlist(default_config$intensityValue))
           )
         ),
         column(6,
           card_panel("Count Scoring", "list-ol",
             textInput("countRange", "Count Ranges (comma-separated)",
-                     value = paste(default_config$countRange, collapse = ",")),
+                     value = dmf_numlist(default_config$countRange)),
             textInput("countValue", "Count Scores (comma-separated)",
-                     value = paste(default_config$countValue, collapse = ","))
+                     value = dmf_numlist(default_config$countValue))
           )
         )
       ),
@@ -100,9 +116,9 @@ dmetfinder_ui <- fluidPage(
         column(6,
           card_panel("Relative Ion Intensity Scoring", "percent",
             textInput("relIntensityRange1", "Relative Intensity Ranges (comma-separated)",
-                     value = paste(default_config$relativeIntensityRange1, collapse = ",")),
+                     value = dmf_numlist(default_config$relativeIntensityRange1)),
             textInput("relIntensityValue1", "Relative Intensity Scores (comma-separated)",
-                     value = paste(default_config$relativeIntensityValue1, collapse = ","))
+                     value = dmf_numlist(default_config$relativeIntensityValue1))
           )
         ),
         column(6,

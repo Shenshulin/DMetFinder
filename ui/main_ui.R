@@ -20,5 +20,7 @@ ui <- navbarPage(
   collapsible = TRUE,
 
   tabPanel("MSGeter",    icon = icon("vial"),                  msgeter_ui),
-  tabPanel("DMetFinder", icon = icon("magnifying-glass-chart"), dmetfinder_ui)
+  tabPanel("DMetFinder", icon = icon("magnifying-glass-chart"), dmetfinder_ui),
+  tabPanel("Peak Quality", icon = icon("chart-line"),
+           peak_quality_ui("PeakQuality"))
 )

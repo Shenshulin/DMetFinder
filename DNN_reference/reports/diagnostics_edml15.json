@@ -1,0 +1,215 @@
+{
+ "model": "G:\\20170828 P_35D Seeds _screen 10Y and 10B _190315\\DMetFinder1.0.3\\DMetFinder\\DNN_reference\\models\\edml15.h5",
+ "threshold": 0.4725,
+ "leakage": {
+  "cross_split_exact": [],
+  "cross_split_mirror": [],
+  "within_split_mirror": {
+   "train": 0,
+   "cal": 0,
+   "test": 0
+  },
+  "hash_variants": [
+   "id",
+   "colflip",
+   "rowflip",
+   "both"
+  ],
+  "verdict": "no exact or mirrored duplicate crosses a split boundary"
+ },
+ "near_duplicate_probe": {
+  "by_split": {
+   "cal": {
+    "n_images": 740,
+    "max_corr_with_a_training_image": 0.9999453052934673,
+    "n_above": {
+     "0.999": 3,
+     "0.99": 3,
+     "0.98": 5,
+     "0.95": 93
+    }
+   },
+   "test": {
+    "n_images": 726,
+    "max_corr_with_a_training_image": 0.9999352312752545,
+    "n_above": {
+     "0.999": 2,
+     "0.99": 6,
+     "0.98": 13,
+     "0.95": 100
+    }
+   }
+  },
+  "verdict": "a small number of near-duplicate images crosses the split boundary; the held-out AUC is therefore slightly optimistic",
+  "test_auc_sensitivity": {
+   "auc_all_test_images": 0.986678411075081,
+   "auc_excluding_duplicates_gt_0.99": 0.9865569251243702,
+   "n_excluded": 6,
+   "auc_delta": 0.00012148595071082013,
+   "reading": "overlap is present but too small to change the held-out estimate"
+  }
+ },
+ "normalisation": {
+  "every_image_max_equals_one": true,
+  "image_max_min": 1.0,
+  "image_max_max": 1.0,
+  "note": "absolute intensity is destroyed by the author's per-image normalisation, so height cannot be a stratifier and the model cannot be height-biased or height-aware"
+ },
+ "descriptor_ranges_test": {
+  "nonzero_frac": [
+   0.0087890625,
+   0.999755859375
+  ],
+  "lobe_width": [
+   0.015625,
+   1.0
+  ],
+  "prevalence": [
+   0.125,
+   1.0
+  ]
+ },
+ "false_negative_by_descriptor_test_positives": [
+  {
+   "feature": "nonzero_frac",
+   "quintiles": [
+    {
+     "lo": 0.0087890625,
+     "hi": 0.16416015625,
+     "n_true_peaks": 85,
+     "n_missed": 0,
+     "false_negative_rate": 0.0,
+     "mean_score": 0.991417646408081
+    },
+    {
+     "lo": 0.16416015625,
+     "hi": 0.25615234375,
+     "n_true_peaks": 84,
+     "n_missed": 0,
+     "false_negative_rate": 0.0,
+     "mean_score": 0.9986818432807922
+    },
+    {
+     "lo": 0.25615234375,
+     "hi": 0.41450195312500004,
+     "n_true_peaks": 84,
+     "n_missed": 1,
+     "false_negative_rate": 0.011904761904761904,
+     "mean_score": 0.973996639251709
+    },
+    {
+     "lo": 0.41450195312500004,
+     "hi": 0.6529296875,
+     "n_true_peaks": 84,
+     "n_missed": 3,
+     "false_negative_rate": 0.03571428571428571,
+     "mean_score": 0.932793140411377
+    },
+    {
+     "lo": 0.6529296875,
+     "hi": 0.999755859375,
+     "n_true_peaks": 85,
+     "n_missed": 8,
+     "false_negative_rate": 0.09411764705882353,
+     "mean_score": 0.8721797466278076
+    }
+   ]
+  },
+  {
+   "feature": "lobe_width",
+   "quintiles": [
+    {
+     "lo": 0.015625,
+     "hi": 0.109375,
+     "n_true_peaks": 83,
+     "n_missed": 1,
+     "false_negative_rate": 0.012048192771084338,
+     "mean_score": 0.9625813364982605
+    },
+    {
+     "lo": 0.109375,
+     "hi": 0.3656250000000001,
+     "n_true_peaks": 86,
+     "n_missed": 1,
+     "false_negative_rate": 0.011627906976744186,
+     "mean_score": 0.9755895137786865
+    },
+    {
+     "lo": 0.3656250000000001,
+     "hi": 0.75,
+     "n_true_peaks": 82,
+     "n_missed": 2,
+     "false_negative_rate": 0.024390243902439025,
+     "mean_score": 0.9575641751289368
+    },
+    {
+     "lo": 0.75,
+     "hi": 0.984375,
+     "n_true_peaks": 76,
+     "n_missed": 2,
+     "false_negative_rate": 0.02631578947368421,
+     "mean_score": 0.9673383831977844
+    },
+    {
+     "lo": 0.984375,
+     "hi": 1.0,
+     "n_true_peaks": 95,
+     "n_missed": 6,
+     "false_negative_rate": 0.06315789473684211,
+     "mean_score": 0.9119205474853516
+    }
+   ]
+  },
+  {
+   "feature": "prevalence",
+   "quintiles": [
+    {
+     "lo": 0.125,
+     "hi": 0.34375,
+     "n_true_peaks": 83,
+     "n_missed": 0,
+     "false_negative_rate": 0.0,
+     "mean_score": 0.9943007230758667
+    },
+    {
+     "lo": 0.34375,
+     "hi": 0.5625,
+     "n_true_peaks": 80,
+     "n_missed": 0,
+     "false_negative_rate": 0.0,
+     "mean_score": 0.994870662689209
+    },
+    {
+     "lo": 0.5625,
+     "hi": 0.734375,
+     "n_true_peaks": 84,
+     "n_missed": 1,
+     "false_negative_rate": 0.011904761904761904,
+     "mean_score": 0.973633885383606
+    },
+    {
+     "lo": 0.734375,
+     "hi": 0.9375,
+     "n_true_peaks": 87,
+     "n_missed": 3,
+     "false_negative_rate": 0.034482758620689655,
+     "mean_score": 0.9460574388504028
+    },
+    {
+     "lo": 0.9375,
+     "hi": 1.0,
+     "n_true_peaks": 88,
+     "n_missed": 8,
+     "false_negative_rate": 0.09090909090909091,
+     "mean_score": 0.8665513396263123
+    }
+   ]
+  }
+ ],
+ "overall": {
+  "test_n_pos": 422,
+  "test_n_missed_pos": 12,
+  "test_n_neg": 304,
+  "test_n_false_pos": 25
+ }
+}

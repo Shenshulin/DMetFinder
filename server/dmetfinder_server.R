@@ -1,276 +1,197 @@
 # ============================================================
 # DMetFinder Server
+# ------------------------------------------------------------
+# 分析主流程在 R/dmetfinder_functions.R 的 dmetfinder_run()，
+# 这里只负责：文件读取与预览、参数装配、进度、结果预览与打包下载。
 # ============================================================
 
 dmetfinder_server <- function(input, output, session) {
-  
-  # Store data
+
   values <- reactiveValues(
     dataA = NULL,
     dataB = NULL,
-    results = list(),
+    run = NULL,
     status = NULL
   )
-  
-  # ============ Data Reading ============
-  
-  # Group A data
+
+  # ---------- 参数解析 ----------
+  parse_num <- function(txt) {
+    if (is.null(txt) || !nzchar(txt)) return(NULL)
+    v <- suppressWarnings(as.numeric(trimws(strsplit(txt, ",")[[1]])))
+    v[!is.na(v)]
+  }
+
+  read_group <- function(file, group_label) {
+    tryCatch({
+      withProgress(message = sprintf("读取 %s 数据…", group_label), {
+        rd <- dmf_read_samples(file$datapath)
+      })
+      list(ok = TRUE, data = rd,
+           msg = sprintf("读取成功：%d 个样品，%s 条离子记录（读取阶段未做合并）",
+                         length(rd$sample_names),
+                         format(nrow(rd$ions), big.mark = ",")))
+    }, error = function(e) {
+      list(ok = FALSE, data = NULL, msg = paste("读取失败：", e$message))
+    })
+  }
+
+  # ---------- 数据读取 ----------
   observeEvent(input$fileA, {
     req(input$fileA)
-    tryCatch({
-      withProgress(message = "Reading Group A data...", {
-        data <- read_raw_data(input$fileA$datapath)
-        values$dataA <- data
-      })
-      output$fileA_info <- renderUI({
-        div(class = "status-box status-success",
-            icon("check-circle"),
-            sprintf("Group A data loaded successfully: %d samples, %d ion rows per sample", 
-                    length(data$sample_ids), nrow(data$samples[[1]])))
-      })
-    }, error = function(e) {
-      output$fileA_info <- renderUI({
-        div(class = "status-box status-error",
-            icon("exclamation-circle"),
-            paste("Failed to load Group A data:", e$message))
-      })
+    r <- read_group(input$fileA, "Group A")
+    values$dataA <- r$data
+    output$fileA_info <- renderUI({
+      div(class = if (r$ok) "status-box status-success" else "status-box status-error",
+          icon(if (r$ok) "check-circle" else "exclamation-circle"),
+          r$msg)
     })
   })
-  
-  # Group B data
+
   observeEvent(input$fileB, {
     req(input$fileB)
-    tryCatch({
-      withProgress(message = "Reading Group B data...", {
-        data <- read_raw_data(input$fileB$datapath)
-        values$dataB <- data
-      })
-      output$fileB_info <- renderUI({
-        div(class = "status-box status-success",
-            icon("check-circle"),
-            sprintf("Group B data loaded successfully: %d samples, %d ion rows per sample", 
-                    length(data$sample_ids), nrow(data$samples[[1]])))
-      })
-    }, error = function(e) {
-      output$fileB_info <- renderUI({
-        div(class = "status-box status-error",
-            icon("exclamation-circle"),
-            paste("Failed to load Group B data:", e$message))
-      })
+    r <- read_group(input$fileB, "Group B")
+    values$dataB <- r$data
+    output$fileB_info <- renderUI({
+      div(class = if (r$ok) "status-box status-success" else "status-box status-error",
+          icon(if (r$ok) "check-circle" else "exclamation-circle"),
+          r$msg)
     })
   })
-  
-  # Data preview
+
+  preview_ions <- function(rd) {
+    req(rd)
+    df <- data.frame(
+      `Sample (No)` = rd$ions$no_int,
+      RT = rd$ions$rt,
+      `RT&m/z` = rd$ions$rt_mz,
+      mz = rd$ions$mz,
+      Intensity = rd$ions$intensity,
+      check.names = FALSE
+    )
+    utils::head(df, 200)
+  }
+
   output$previewA <- renderDT({
-    req(values$dataA)
-    df <- values$dataA$samples[[1]]
-    datatable(head(df, 100), options = list(scrollX = TRUE, pageLength = 10))
+    datatable(preview_ions(values$dataA), options = list(scrollX = TRUE, pageLength = 10))
   })
-  
+
   output$previewB <- renderDT({
-    req(values$dataB)
-    df <- values$dataB$samples[[1]]
-    datatable(head(df, 100), options = list(scrollX = TRUE, pageLength = 10))
+    datatable(preview_ions(values$dataB), options = list(scrollX = TRUE, pageLength = 10))
   })
-  
-  # ============ Analysis Execution ============
-  
+
+  # ---------- 执行分析 ----------
   observeEvent(input$runAnalysis, {
-    req(values$dataA, values$dataB)
-    
-    # Get configuration
+    req(input$fileA, input$fileB)
+
     config <- list(
       ErrorRange = input$ErrorRange,
       ErrorRangeInGroups = input$ErrorRangeInGroups,
-      FloatCount = input$FloatCount,
-      mergeRows = input$mergeRows,
-      m1 = input$m1,
-      m2 = input$m2,
-      m3 = input$m3,
+      FloatCount = as.integer(input$FloatCount),
+      mergeRows = isTRUE(input$mergeRows),
+      m1 = input$m1, m2 = input$m2, m3 = input$m3,
       p50IonPercent = input$p50IonPercent,
       p80IonPercent = input$p80IonPercent,
-      intensityRange = as.numeric(strsplit(input$intensityRange, ",")[[1]]),
-      intensityValue = as.numeric(strsplit(input$intensityValue, ",")[[1]]),
-      countRange = as.numeric(strsplit(input$countRange, ",")[[1]]),
-      countValue = as.numeric(strsplit(input$countValue, ",")[[1]]),
-      relativeIntensityRange1 = as.numeric(strsplit(input$relIntensityRange1, ",")[[1]]),
-      relativeIntensityValue1 = as.numeric(strsplit(input$relIntensityValue1, ",")[[1]])
+      intensityRange = parse_num(input$intensityRange),
+      intensityValue = parse_num(input$intensityValue),
+      countRange = parse_num(input$countRange),
+      countValue = parse_num(input$countValue),
+      relativeIntensityRange1 = parse_num(input$relIntensityRange1),
+      relativeIntensityValue1 = parse_num(input$relIntensityValue1)
     )
-    
+
+    outdir <- file.path(tempdir(), paste0("dmetfinder_out_", format(Sys.time(), "%Y%m%d%H%M%S")))
+
     tryCatch({
-      withProgress(message = "Analyzing data...", value = 0, {
-        
-        # Step 1: Merge Group A samples
-        incProgress(0.05, detail = "Merging Group A samples...")
-        mergedA <- merge_samples(values$dataA, config$ErrorRange)
-        
-        # Step 2: Merge Group B samples
-        incProgress(0.15, detail = "Merging Group B samples...")
-        mergedB <- merge_samples(values$dataB, config$ErrorRange)
-        
-        # Step 3: Score Group A ions
-        incProgress(0.25, detail = "Scoring Group A ions...")
-        scoredA <- score_ions(mergedA, config)
-        
-        # Step 4: Score Group B ions
-        incProgress(0.35, detail = "Scoring Group B ions...")
-        scoredB <- score_ions(mergedB, config)
-        
-        # Step 5: Group A isotope search
-        incProgress(0.45, detail = "Group A isotope search...")
-        isoA <- find_isotopes(values$dataA, config)
-        
-        # Step 6: Group B isotope search
-        incProgress(0.55, detail = "Group B isotope search...")
-        isoB <- find_isotopes(values$dataB, config)
-        
-        # Step 7: Group A 80% filter
-        incProgress(0.65, detail = "Group A 80% filter...")
-        filterA80 <- filter_by_percent(mergedA, config$p80IonPercent)
-        
-        # Step 8: Group B 80% filter
-        incProgress(0.72, detail = "Group B 80% filter...")
-        filterB80 <- filter_by_percent(mergedB, config$p80IonPercent)
-        
-        # Step 9: Compare Group A 80% ions with Group B total ions
-        incProgress(0.8, detail = "Comparing Group A 80% ions with Group B total ions...")
-        compareA <- compare_groups(filterA80, mergedB, config$ErrorRange)
-        
-        # Step 10: Compare Group B 80% ions with Group A total ions
-        incProgress(0.88, detail = "Comparing Group B 80% ions with Group A total ions...")
-        compareB <- compare_groups(filterB80, mergedA, config$ErrorRange)
-        
-        # Step 11: Group A - Group B differential ion summary
-        incProgress(0.94, detail = "Generating differential ion summary...")
-        diff_summary <- compare_groups(filterA80, filterB80, config$ErrorRange)
-        
-        # Save results
-        incProgress(1, detail = "Done")
-        values$results <- list(
-          filterA = mergedA,
-          scoreA = scoredA,
-          isoA = isoA,
-          compareA = compareA,
-          diff = diff_summary,
-          filterB = mergedB,
-          scoreB = scoredB,
-          isoB = isoB,
-          compareB = compareB
+      withProgress(message = "分析中…", value = 0, {
+        values$run <- dmetfinder_run(
+          input$fileA$datapath,
+          input$fileB$datapath,
+          outdir,
+          config = config,
+          progress = function(frac, detail) incProgress(frac, detail = detail)
         )
-        
-        values$status <- "success"
       })
-      
+      values$status <- "success"
       output$run_status <- renderUI({
-        div(class = "status-box status-success",
-            icon("check-circle"),
-            "Analysis complete! Switch to the 'Results' tab to view results.")
+        div(class = "status-box status-success", icon("check-circle"),
+            "分析完成，可在 Results 标签查看与下载结果。")
       })
-      
     }, error = function(e) {
       values$status <- "error"
       output$run_status <- renderUI({
-        div(class = "status-box status-error",
-            icon("exclamation-circle"),
-            paste("Analysis failed:", e$message))
+        div(class = "status-box status-error", icon("exclamation-circle"),
+            paste("分析失败：", e$message))
       })
     })
   })
-  
-  # ============ Result Display ============
-  
-  # Result file list
+
+  # ---------- 结果展示 ----------
   output$result_files <- renderUI({
-    req(values$results)
-    files <- c(
-      "GroupA-50and80PercentIonFilter.xlsx",
-      "GroupA-IonScoring.xlsx",
-      "GroupA-IsotopeSearch.xlsx",
-      "GroupA-80PercentIonsVsGroupBTotalIons.xlsx",
-      "GroupA-GroupB-DifferentialIonSummary.xlsx",
-      "GroupB-50and80PercentIonFilter.xlsx",
-      "GroupB-IonScoring.xlsx",
-      "GroupB-IsotopeSearch.xlsx",
-      "GroupB-80PercentIonsVsGroupATotalIons.xlsx"
+    req(values$run)
+    tags$ul(class = "file-list",
+            lapply(basename(values$run$files), function(f)
+              tags$li(icon("file-excel"), f)))
+  })
+
+  # 结果表 -> 预览用 data.frame（超过 500 行只预览前 500 行）
+  sheet_df <- function(sh, limit = 500L) {
+    req(sh)
+    cols <- sh$cols
+    df <- as.data.frame(cols, stringsAsFactors = FALSE, check.names = FALSE,
+                        optional = TRUE)
+    hdr <- sh$header[[length(sh$header)]]
+    nm <- rep(NA_character_, ncol(df))
+    m <- min(length(hdr), ncol(df))
+    if (m > 0) nm[seq_len(m)] <- as.character(hdr[seq_len(m)])
+    bad <- is.na(nm) | !nzchar(nm)
+    nm[bad] <- paste0("V", which(bad))
+    names(df) <- make.unique(nm)
+    if (nrow(df) > limit) df <- df[seq_len(limit), , drop = FALSE]
+    df
+  }
+
+  pick <- function(res, which) {
+    req(res)
+    switch(which,
+      filterA = sheet_df(res$groups$A$sheets[[2]]),
+      scoreA  = sheet_df(res$groups$A$sheets[[6]]),
+      isoA    = sheet_df(res$groups$A$sheets[[7]]),
+      cmpA    = sheet_df(res$sheets$compare_ab),
+      diff    = sheet_df(res$sheets$diff_ab),
+      filterB = sheet_df(res$groups$B$sheets[[2]]),
+      scoreB  = sheet_df(res$groups$B$sheets[[6]]),
+      isoB    = sheet_df(res$groups$B$sheets[[7]]),
+      cmpB    = sheet_df(res$sheets$compare_ba)
     )
-    tags$ul(
-      class = "file-list",
-      lapply(files, function(f) tags$li(icon("file-excel"), f))
-    )
-  })
-  
-  # Result preview
-  output$result_filterA <- renderDT({
-    req(values$results$filterA)
-    datatable(head(values$results$filterA, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_scoreA <- renderDT({
-    req(values$results$scoreA)
-    datatable(head(values$results$scoreA, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_isoA <- renderDT({
-    req(values$results$isoA)
-    datatable(head(values$results$isoA, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_compareA <- renderDT({
-    req(values$results$compareA)
-    datatable(head(values$results$compareA, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_diff <- renderDT({
-    req(values$results$diff)
-    datatable(head(values$results$diff, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_filterB <- renderDT({
-    req(values$results$filterB)
-    datatable(head(values$results$filterB, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_scoreB <- renderDT({
-    req(values$results$scoreB)
-    datatable(head(values$results$scoreB, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_isoB <- renderDT({
-    req(values$results$isoB)
-    datatable(head(values$results$isoB, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  output$result_compareB <- renderDT({
-    req(values$results$compareB)
-    datatable(head(values$results$compareB, 100), options = list(scrollX = TRUE, pageLength = 10))
-  })
-  
-  # Download all results
+  }
+
+  render_result <- function(which) {
+    renderDT({
+      datatable(pick(values$run, which),
+                options = list(scrollX = TRUE, pageLength = 10))
+    })
+  }
+
+  output$result_filterA <- render_result("filterA")
+  output$result_scoreA  <- render_result("scoreA")
+  output$result_isoA    <- render_result("isoA")
+  output$result_compareA <- render_result("cmpA")
+  output$result_diff    <- render_result("diff")
+  output$result_filterB <- render_result("filterB")
+  output$result_scoreB  <- render_result("scoreB")
+  output$result_isoB    <- render_result("isoB")
+  output$result_compareB <- render_result("cmpB")
+
+  # ---------- 打包下载 ----------
   output$downloadAll <- downloadHandler(
     filename = function() {
       paste0("DMetFinder_results_", format(Sys.Date(), "%Y%m%d"), ".zip")
     },
     content = function(file) {
-      req(values$results)
-      
-      # Create temporary directory
-      tmpdir <- tempfile(pattern = "dmetfinder_")
-      dir.create(tmpdir, showWarnings = FALSE)
-      
-      # Write result files
-      write_xlsx(values$results$filterA, file.path(tmpdir, "GroupA-50and80PercentIonFilter.xlsx"))
-      write_xlsx(values$results$scoreA, file.path(tmpdir, "GroupA-IonScoring.xlsx"))
-      write_xlsx(values$results$isoA, file.path(tmpdir, "GroupA-IsotopeSearch.xlsx"))
-      write_xlsx(values$results$compareA, file.path(tmpdir, "GroupA-80PercentIonsVsGroupBTotalIons.xlsx"))
-      write_xlsx(values$results$diff, file.path(tmpdir, "GroupA-GroupB-DifferentialIonSummary.xlsx"))
-      write_xlsx(values$results$filterB, file.path(tmpdir, "GroupB-50and80PercentIonFilter.xlsx"))
-      write_xlsx(values$results$scoreB, file.path(tmpdir, "GroupB-IonScoring.xlsx"))
-      write_xlsx(values$results$isoB, file.path(tmpdir, "GroupB-IsotopeSearch.xlsx"))
-      write_xlsx(values$results$compareB, file.path(tmpdir, "GroupB-80PercentIonsVsGroupATotalIons.xlsx"))
-      
-      # Zip files
-      files_to_zip <- list.files(tmpdir, full.names = TRUE)
-      zip(file, files_to_zip, extras = "-j")
+      req(values$run)
+      old <- setwd(dirname(values$run$files[1]))
+      on.exit(setwd(old), add = TRUE)
+      utils::zip(file, basename(values$run$files), flags = "-j")
     }
   )
 }

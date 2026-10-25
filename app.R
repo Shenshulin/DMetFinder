@@ -50,12 +50,48 @@ source("R/config.R")
 source("R/dmetfinder_functions.R")
 
 # ============================================================
+# Source Peak Quality module (new tab, isolated from the others)
+# ============================================================
+source("R/peak_quality/peak_quality_config.R")
+source("R/peak_quality/run_log.R")           # log on disk / job estimate / snapshot
+source("R/peak_quality/eic_smooth.R")        # XIC smoothing before analysis
+source("R/peak_quality/vendor/squallms_qscore.R")   # verbatim upstream code
+source("R/peak_quality/score_adapter.R")
+source("R/peak_quality/xic_extract.R")
+source("R/peak_quality/peak_detect.R")
+source("R/peak_quality/presence.R")
+source("R/peak_quality/peak_table.R")
+source("R/peak_quality/feature_summary.R")
+source("R/peak_quality/pipeline.R")
+source("R/peak_quality/plot_peak_quality.R")
+source("R/peak_quality/method_registry.R")
+source("R/peak_quality/cpc_adapter.R")
+source("R/peak_quality/unified_results.R")
+source("R/peak_quality/quality_class.R")     # provisional four-class verdict
+source("R/peak_quality/compare_methods.R")
+source("R/peak_quality/peak_group.R")
+# DNN: peak-group image construction, then the bridge to the Python model.
+# data must come first - integration calls into it.
+source("R/peak_quality/pq_dnn_data.R")
+source("R/peak_quality/pq_dnn_integration.R")
+# The three published tables (GroupResults / SampleResults / MethodMetrics) and
+# the provenance block. Needs the registry, the unified builder and the DNN
+# bridge, so it is sourced last of the analytical files.
+source("R/peak_quality/result_tables.R")
+source("R/peak_quality/plot_compare.R")
+source("R/peak_quality/export_peak_quality.R")
+source("R/peak_quality/peak_quality_ui.R")
+source("R/peak_quality/peak_quality_server.R")
+
+# ============================================================
 # Source MSGeter Modules
 # ============================================================
 source("shiny_app/ui/FeatureGeter_ui.R")
 source("shiny_app/server/FeatureGeter_server.R")
 source("shiny_app/ui/Ms2Geter_ui.R")
 source("shiny_app/server/Ms2Geter_server.R")
+source("shiny_app/ui/RtGeter_ui.R")
+source("shiny_app/server/RtGeter_server.R")
 
 # ============================================================
 # Source UI

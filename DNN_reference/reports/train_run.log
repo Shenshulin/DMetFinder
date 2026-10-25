@@ -1,0 +1,144 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1792586751.482524   15528 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1792586754.450552   15528 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+C:\Users\Shenshulin\pqdnn-venv\Lib\site-packages\keras\src\layers\convolutional\base_conv.py:113: UserWarning: Do not pass an `input_shape`/`input_dim` argument to a layer. When using Sequential models, prefer using an `Input(shape)` object as the first layer in the model instead.
+  super().__init__(activity_regularizer=activity_regularizer, **kwargs)
+WARNING:tensorflow:TensorFlow GPU support is not available on native Windows for TensorFlow >= 2.11. Even if CUDA/cuDNN are installed, GPU will not be used. Please use WSL2 or the TensorFlow-DirectML plugin.
+shapes: {'trainX': [1304, 64, 64, 1], 'trainY': [1304, 2], 'calX': [740, 64, 64, 1], 'calY': [740, 2], 'testX': [726, 64, 64, 1], 'testY': [726, 2]}
+class balance: {'train': [652, 652], 'cal': [302, 438], 'test': [304, 422]}
+Model: "sequential"
+┌─────────────────────────────────┬────────────────────────┬───────────────┐
+│ Layer (type)                    │ Output Shape           │       Param # │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ conv2d (Conv2D)                 │ (None, 64, 64, 32)     │           320 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ max_pooling2d (MaxPooling2D)    │ (None, 32, 32, 32)     │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dropout (Dropout)               │ (None, 32, 32, 32)     │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ conv2d_1 (Conv2D)               │ (None, 30, 30, 16)     │         4,624 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ max_pooling2d_1 (MaxPooling2D)  │ (None, 15, 15, 16)     │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dropout_1 (Dropout)             │ (None, 15, 15, 16)     │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ flatten (Flatten)               │ (None, 3600)           │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dense (Dense)                   │ (None, 64)             │       230,464 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dropout_2 (Dropout)             │ (None, 64)             │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dense_1 (Dense)                 │ (None, 2)              │           130 │
+└─────────────────────────────────┴────────────────────────┴───────────────┘
+ Total params: 235,538 (920.07 KB)
+ Trainable params: 235,538 (920.07 KB)
+ Non-trainable params: 0 (0.00 B)
+
+Epoch 1/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 2s - 172ms/step - accuracy: 0.7791 - loss: 0.4897 - mse: 0.1588 - val_accuracy: 0.8608 - val_loss: 0.4098 - val_mse: 0.1240
+Epoch 2/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 53ms/step - accuracy: 0.8850 - loss: 0.3285 - mse: 0.0959 - val_accuracy: 0.8757 - val_loss: 0.3119 - val_mse: 0.0917
+Epoch 3/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 51ms/step - accuracy: 0.8957 - loss: 0.2746 - mse: 0.0805 - val_accuracy: 0.8878 - val_loss: 0.2752 - val_mse: 0.0815
+Epoch 4/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 56ms/step - accuracy: 0.9103 - loss: 0.2495 - mse: 0.0716 - val_accuracy: 0.8986 - val_loss: 0.2414 - val_mse: 0.0704
+Epoch 5/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 54ms/step - accuracy: 0.9195 - loss: 0.2238 - mse: 0.0649 - val_accuracy: 0.9216 - val_loss: 0.2152 - val_mse: 0.0613
+Epoch 6/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 52ms/step - accuracy: 0.9241 - loss: 0.2123 - mse: 0.0595 - val_accuracy: 0.9230 - val_loss: 0.2140 - val_mse: 0.0600
+Epoch 7/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 54ms/step - accuracy: 0.9287 - loss: 0.1939 - mse: 0.0555 - val_accuracy: 0.9270 - val_loss: 0.2051 - val_mse: 0.0571
+Epoch 8/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 48ms/step - accuracy: 0.9287 - loss: 0.1938 - mse: 0.0557 - val_accuracy: 0.9351 - val_loss: 0.1901 - val_mse: 0.0525
+Epoch 9/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 50ms/step - accuracy: 0.9394 - loss: 0.1781 - mse: 0.0504 - val_accuracy: 0.9351 - val_loss: 0.1808 - val_mse: 0.0504
+Epoch 10/500
+11/11 - 0s - 42ms/step - accuracy: 0.9363 - loss: 0.1731 - mse: 0.0489 - val_accuracy: 0.9378 - val_loss: 0.1882 - val_mse: 0.0529
+Epoch 11/500
+11/11 - 0s - 42ms/step - accuracy: 0.9410 - loss: 0.1706 - mse: 0.0483 - val_accuracy: 0.9365 - val_loss: 0.1809 - val_mse: 0.0504
+Epoch 12/500
+11/11 - 0s - 42ms/step - accuracy: 0.9325 - loss: 0.1783 - mse: 0.0514 - val_accuracy: 0.9405 - val_loss: 0.1835 - val_mse: 0.0510
+Epoch 13/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 52ms/step - accuracy: 0.9333 - loss: 0.1694 - mse: 0.0496 - val_accuracy: 0.9446 - val_loss: 0.1777 - val_mse: 0.0490
+Epoch 14/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 54ms/step - accuracy: 0.9417 - loss: 0.1583 - mse: 0.0444 - val_accuracy: 0.9432 - val_loss: 0.1755 - val_mse: 0.0489
+Epoch 15/500
+11/11 - 0s - 43ms/step - accuracy: 0.9425 - loss: 0.1668 - mse: 0.0463 - val_accuracy: 0.9405 - val_loss: 0.1757 - val_mse: 0.0491
+Epoch 16/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 54ms/step - accuracy: 0.9494 - loss: 0.1441 - mse: 0.0410 - val_accuracy: 0.9432 - val_loss: 0.1733 - val_mse: 0.0484
+Epoch 17/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 53ms/step - accuracy: 0.9486 - loss: 0.1464 - mse: 0.0416 - val_accuracy: 0.9419 - val_loss: 0.1706 - val_mse: 0.0477
+Epoch 18/500
+11/11 - 0s - 42ms/step - accuracy: 0.9417 - loss: 0.1541 - mse: 0.0444 - val_accuracy: 0.9311 - val_loss: 0.1843 - val_mse: 0.0527
+Epoch 19/500
+11/11 - 0s - 41ms/step - accuracy: 0.9463 - loss: 0.1529 - mse: 0.0430 - val_accuracy: 0.9311 - val_loss: 0.1860 - val_mse: 0.0533
+Epoch 20/500
+11/11 - 0s - 41ms/step - accuracy: 0.9433 - loss: 0.1443 - mse: 0.0414 - val_accuracy: 0.9365 - val_loss: 0.1812 - val_mse: 0.0510
+Epoch 21/500
+11/11 - 0s - 42ms/step - accuracy: 0.9440 - loss: 0.1488 - mse: 0.0426 - val_accuracy: 0.9365 - val_loss: 0.1754 - val_mse: 0.0488
+Epoch 22/500
+11/11 - 0s - 41ms/step - accuracy: 0.9525 - loss: 0.1385 - mse: 0.0384 - val_accuracy: 0.9338 - val_loss: 0.1886 - val_mse: 0.0532
+Epoch 23/500
+11/11 - 0s - 42ms/step - accuracy: 0.9463 - loss: 0.1366 - mse: 0.0399 - val_accuracy: 0.9338 - val_loss: 0.1822 - val_mse: 0.0517
+Epoch 24/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 54ms/step - accuracy: 0.9433 - loss: 0.1408 - mse: 0.0404 - val_accuracy: 0.9446 - val_loss: 0.1656 - val_mse: 0.0460
+Epoch 25/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 55ms/step - accuracy: 0.9509 - loss: 0.1320 - mse: 0.0385 - val_accuracy: 0.9459 - val_loss: 0.1638 - val_mse: 0.0454
+Epoch 26/500
+11/11 - 0s - 42ms/step - accuracy: 0.9571 - loss: 0.1198 - mse: 0.0338 - val_accuracy: 0.9405 - val_loss: 0.1638 - val_mse: 0.0448
+Epoch 27/500
+11/11 - 0s - 42ms/step - accuracy: 0.9571 - loss: 0.1225 - mse: 0.0342 - val_accuracy: 0.9446 - val_loss: 0.1685 - val_mse: 0.0460
+Epoch 28/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 51ms/step - accuracy: 0.9555 - loss: 0.1292 - mse: 0.0367 - val_accuracy: 0.9486 - val_loss: 0.1591 - val_mse: 0.0437
+Epoch 29/500
+11/11 - 0s - 40ms/step - accuracy: 0.9555 - loss: 0.1273 - mse: 0.0355 - val_accuracy: 0.9405 - val_loss: 0.1687 - val_mse: 0.0463
+Epoch 30/500
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+11/11 - 1s - 50ms/step - accuracy: 0.9586 - loss: 0.1155 - mse: 0.0329 - val_accuracy: 0.9432 - val_loss: 0.1564 - val_mse: 0.0425
+Epoch 31/500
+11/11 - 0s - 40ms/step - accuracy: 0.9540 - loss: 0.1153 - mse: 0.0329 - val_accuracy: 0.9473 - val_loss: 0.1677 - val_mse: 0.0455
+Epoch 32/500
+11/11 - 0s - 40ms/step - accuracy: 0.9601 - loss: 0.1182 - mse: 0.0330 - val_accuracy: 0.9432 - val_loss: 0.1594 - val_mse: 0.0433
+Epoch 33/500
+11/11 - 0s - 41ms/step - accuracy: 0.9555 - loss: 0.1147 - mse: 0.0327 - val_accuracy: 0.9432 - val_loss: 0.1651 - val_mse: 0.0451
+Epoch 34/500
+11/11 - 0s - 41ms/step - accuracy: 0.9647 - loss: 0.0983 - mse: 0.0281 - val_accuracy: 0.9459 - val_loss: 0.1614 - val_mse: 0.0435
+Epoch 35/500
+11/11 - 0s - 41ms/step - accuracy: 0.9601 - loss: 0.1103 - mse: 0.0306 - val_accuracy: 0.9459 - val_loss: 0.1639 - val_mse: 0.0440
+Epoch 36/500
+11/11 - 0s - 40ms/step - accuracy: 0.9647 - loss: 0.1051 - mse: 0.0281 - val_accuracy: 0.9446 - val_loss: 0.1667 - val_mse: 0.0446
+Epoch 37/500
+11/11 - 0s - 41ms/step - accuracy: 0.9640 - loss: 0.1009 - mse: 0.0286 - val_accuracy: 0.9459 - val_loss: 0.1643 - val_mse: 0.0434
+Epoch 38/500
+11/11 - 0s - 41ms/step - accuracy: 0.9640 - loss: 0.1036 - mse: 0.0290 - val_accuracy: 0.9473 - val_loss: 0.1632 - val_mse: 0.0431
+Epoch 39/500
+11/11 - 0s - 40ms/step - accuracy: 0.9655 - loss: 0.0997 - mse: 0.0274 - val_accuracy: 0.9405 - val_loss: 0.1779 - val_mse: 0.0462
+Epoch 40/500
+11/11 - 0s - 43ms/step - accuracy: 0.9647 - loss: 0.0881 - mse: 0.0260 - val_accuracy: 0.9432 - val_loss: 0.1734 - val_mse: 0.0450
+WARNING:absl:You are saving your model as an HDF5 file via `model.save()` or `keras.saving.save_model(model)`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')` or `keras.saving.save_model(model, 'my_model.keras')`. 
+WARNING:absl:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+WARNING:absl:Error in loading the saved optimizer state. As a result, your model is starting with a freshly initialized optimizer.
+train n=1304 auc=0.9946 sens=0.979 spec=0.951 prec=0.952 acc=0.965
+cal   n=740 auc=0.9830 sens=0.943 spec=0.944 prec=0.960 acc=0.943
+test  n=726 auc=0.9867 sens=0.972 spec=0.921 prec=0.945 acc=0.950
+
+wall: 23.3s
+model: ../models\edml15.h5
+log  : ../models\edml15_train_log.json

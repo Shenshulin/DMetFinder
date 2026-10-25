@@ -20,5 +20,16 @@ default_config <- list(
   relativeIntensityRange2 = c(0, 2, 3, 4, 5),
   relativeIntensitySplit = 5,
   relativeIntensityValue1 = c(0.5, 1, 2, 3, 5, 10),
-  relativeIntensityValue2 = c(1, 2, 3, 5, 10)
+  relativeIntensityValue2 = c(1, 2, 3, 5, 10),
+  # 50% 离子打分是原版独立的一套打分表（p50IntensityRange… 等），
+  # 默认值与全离子那套完全相同，界面上未单独暴露时沿用这里的值。
+  p50IntensityRange = c(0, 5000, 10000, 50000, 100000, 500000, 1000000),
+  p50IntensityValue = c(1, 2, 5, 6, 8, 9, 10),
+  p50RelativeIntensitySplit = 5,
+  p50RelativeIntensityRange1 = c(0, 1, 2, 3, 4, 5),
+  p50RelativeIntensityValue1 = c(0.5, 1, 2, 3, 5, 10),
+  p50RelativeIntensityRange2 = c(0, 2, 3, 4, 5),
+  p50RelativeIntensityValue2 = c(1, 2, 3, 5, 10),
+  p50CountRange = c(1, 3, 5, 10),
+  p50CountValue = c(10, 3, 2, 1)
 )

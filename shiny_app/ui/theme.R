@@ -307,6 +307,10 @@ select.form-control, .form-select { padding-right: 28px; }
 .format-hint .fa, .format-hint .fas { margin-top: 2px; color: #6366f1; }
 .hint-neutral { background: #f8fafc; color: #475569; border-color: #e8ebf3; }
 .hint-neutral .fa, .hint-neutral .fas { color: #94a3b8; }
+/* Used for settings that change the meaning of the numbers, not just their
+   value (e.g. smoothing an XIC before scoring). #92400e on #fffbeb = 8.6:1. */
+.hint-warning { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+.hint-warning .fa, .hint-warning .fas { color: #b45309; }
 
 /* ==================== log / console output ==================== */
 pre.shiny-text-output,
@@ -508,6 +512,68 @@ ul.file-list li .fa, ul.file-list li .fas { color: #16a34a; }
   font-style: italic;
 }
 
+/* ==================== Peak Quality module ==================== */
+.mini-summary {
+  margin: 4px 0 12px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: .8rem;
+  font-weight: 600;
+  border: 1px solid #e0e7ff;
+}
+.mini-summary--muted {
+  background: #f8fafc; color: #8290a6; border-color: #eef1f7; font-weight: 500;
+}
+.mini-summary__warn { margin-top: 5px; color: #b45309; font-weight: 600; }
+
+.pq-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.pq-card {
+  background: #fff; border: 1px solid #e8ebf3; border-radius: 12px;
+  padding: 12px 14px; text-align: left;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+}
+.pq-card__value { font-size: 1.35rem; font-weight: 700; line-height: 1.1; color: #1f2937; }
+.pq-card__label { font-size: .72rem; color: #6b7280; margin-top: 3px; text-transform: uppercase; letter-spacing: .04em; }
+.pq-card--ok    { border-left: 4px solid #10b981; }
+.pq-card--ok    .pq-card__value { color: #047857; }
+.pq-card--warn  { border-left: 4px solid #f59e0b; }
+.pq-card--warn  .pq-card__value { color: #b45309; }
+.pq-card--bad   { border-left: 4px solid #ef4444; }
+.pq-card--bad   .pq-card__value { color: #b91c1c; }
+.pq-card--neutral { border-left: 4px solid #6366f1; }
+
+.kv-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px 18px;
+}
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px dashed #eef1f7; }
+.kv__k { color: #6b7280; font-size: .8rem; }
+.kv__v { color: #111827; font-size: .82rem; font-weight: 600; text-align: right; word-break: break-word; }
+
+.table-tools {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.table-tools .form-group { margin-bottom: 0; }
+.table-tools .checkbox { margin: 0; font-size: .82rem; }
+.peak-view__toggle .checkbox { margin-top: 26px; font-size: .8rem; color: #4b5563; }
+
+.btn-soft {
+  background: #eef2ff; color: #3730a3; border: 1px solid #e0e7ff;
+  border-radius: 9px; font-weight: 600;
+}
+.btn-soft:hover, .btn-soft:focus {
+  background: #e0e7ff; color: #312e81; border-color: #c7d2fe;
+}
+.btn-sm.btn-soft { padding: 4px 10px; font-size: .78rem; }
+
 /* ==================== misc ==================== */
 .text-muted, .help-block { color: #8a93a5 !important; font-size: .8rem; }
 .shiny-output-error { color: #b91c1c; }
@@ -580,10 +646,15 @@ sub_bar <- function(title, subtitle = NULL, icon_name = "circle-dot") {
   )
 }
 
-# Inline hint box (variant = "info" | "neutral")
+# Inline hint box (variant = "info" | "neutral" | "warning")
 format_hint <- function(text, icon_name = "circle-info", variant = "info") {
+  variant <- as.character(variant)[1]
+  cls <- switch(variant,
+                neutral = "hint-neutral",
+                warning = "hint-warning",
+                "")
   shiny::div(
-    class = paste("format-hint", if (identical(variant, "neutral")) "hint-neutral" else ""),
+    class = paste("format-hint", cls),
     shiny::icon(icon_name),
     shiny::span(text)
   )

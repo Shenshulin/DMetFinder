@@ -11,6 +11,8 @@ library(tools)
 library(data.table)
 library(purrr)
 library(rawrr)
+library(DT)
+library(writexl)
 # library(shinyWidgets)
 # library(shinyjs)
 # library(msentropy)
@@ -30,6 +32,8 @@ source("ui/FeatureGeter_ui.R")
 source("server/FeatureGeter_server.R")
 source("ui/Ms2Geter_ui.R")
 source("server/Ms2Geter_server.R")
+source("ui/RtGeter_ui.R")
+source("server/RtGeter_server.R")
 options(shiny.maxRequestSize = 100 * 1024^2)
 # Define UI and server
 ui <- shiny::fluidPage(
@@ -44,13 +48,15 @@ ui <- shiny::fluidPage(
     windowTitle = "MSGeter | Mass Spectrometry Processing",
     collapsible = TRUE,
     tabPanel("Ms1Geter", icon = icon("wave-square"), FeatureGeter_ui("FeatureGeter")),
-    tabPanel("Ms2Geter", icon = icon("layer-group"), Ms2Geter_ui("Ms2Geter"))
+    tabPanel("Ms2Geter", icon = icon("layer-group"), Ms2Geter_ui("Ms2Geter")),
+    tabPanel("RtGeter",  icon = icon("crosshairs"),  RtGeter_ui("RtGeter"))
   )
 )
 # Define server logic
 server <- function(input, output, session) {
   FeatureGeter_server("FeatureGeter")
   Ms2Geter_server("Ms2Geter")
+  RtGeter_server("RtGeter")
 }
 
 shinyApp(ui,server)

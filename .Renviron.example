@@ -1,0 +1,12 @@
+# 复制成 .Renviron（同目录）后，把路径改成本机的隔离库位置。
+#
+# CPC 的 R 包不在 CRAN、也不在 Bioconductor，必须从作者源码编译，
+# 并且会带进 xcms / MSnbase / mzR 一条 Bioconductor 依赖链（约 95 MB）。
+# 所以它装在一个独立目录里，不进 R 主库、也不进用户库：
+#
+#   Rscript .workbuddy/tools/install_cpc.R [目标目录]      # 默认 C:/rlib/cpc
+#
+# 装完把下面这行的路径改对即可（R 从项目根启动时会自动读到）。
+# 也可以用 options(dmetfinder.cpc.lib = "…") 临时覆盖。
+# 没装的时候模块不会报错：CPC 状态是 not_installed，不产出指标，也不降级为低质量。
+DMETFINDER_CPC_LIB=C:/rlib/cpc
