@@ -22,7 +22,7 @@
 
 | 资源 | 来源 | 状态 |
 |---|---|---|
-| 代码 | `https://github.com/JainLab/Manuscript-DNNs-for-Classification-of-LCMS-Peaks` | 已克隆，commit `94237bf` |
+| 代码 | `https://github.com/JainLab/Manuscript-DNNs-for-Classification-of-LCMS-Peaks` | 已克隆，commit `94237bf`（`source_code/repo/` 不入库，按此 commit 重新 clone 即可；许可证留存为 `source_code/LICENSE.JainLab.txt`） |
 | 数据 | `https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession=MSV000084186`（DOI 10.25345/C5FD2F） | 已下载核心文件，清单见 `DATA_MANIFEST.csv` |
 | 论文 | DOI `10.1021/acs.analchem.9b02983` | 未下载全文（无需，方法以代码为准） |
 

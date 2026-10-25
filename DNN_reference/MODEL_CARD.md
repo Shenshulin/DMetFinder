@@ -144,8 +144,10 @@ DNN 结果改写 `quality_class`。
 1. 该模型默认仅用于**研究与教育**。
 2. 若要随 DMetFinder 对外分发（含 TBtools 插件渠道），需先确认分发是否属于
    "non-profit"；涉及商业用途时**必须先取得 UCSD 的书面许可**。
-3. 作者许可要求版权声明与免责条款随所有副本一起出现，`DNN_reference/source_code/repo/LICENSE.txt`
-   原件不要删除或改写。
+3. 作者许可要求版权声明与免责条款随所有副本一起出现。许可证原文随仓库保存在
+   `DNN_reference/source_code/LICENSE.JainLab.txt`，**不要删除或改写**；它对应上游
+   `JainLab/Manuscript-DNNs-for-Classification-of-LCMS-Peaks` commit `94237bf`，
+   `repo/` 本身不入库，按 `DATA_MANIFEST.csv` 里的 URL 与 commit 重新 `git clone` 即可。
 4. 本模型的输出不构成任何监管意义上的结论。
 
 ---

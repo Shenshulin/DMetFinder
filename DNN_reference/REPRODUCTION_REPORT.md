@@ -16,7 +16,7 @@
 |---|---|
 | 论文 | Kantz et al. (2019), *Deep Neural Networks for Classification of LC-MS Spectral Peaks*, Anal. Chem. |
 | DOI | `10.1021/acs.analchem.9b02983` |
-| 代码仓库 | `JainLab/Manuscript-DNNs-for-Classification-of-LCMS-Peaks`，commit `94237bf45e790a8332e45a2f2842116f46a18aa9` |
+| 代码仓库 | `JainLab/Manuscript-DNNs-for-Classification-of-LCMS-Peaks`，commit `94237bf45e790a8332e45a2f2842116f46a18aa9`（克隆不入库，按此 commit 复现） |
 | 训练脚本 | `other/TrainTestCalibrationData/EDML_deep_learning2.py`（5,106 B） |
 | 数据 | MassIVE **MSV000084186** → `EDML_trainTestCalData15.mat`，25,797,944 B，SHA-256 `afb629bb…adae2` |
 | 复刻实现 | `source_code/pq_dnn_train.py` |
