@@ -22,6 +22,17 @@ FeatureGeter_ui <- function(id){
                     accept = c(".csv", ".xlsx"))
         ),
 
+        side_group("Time Range (min)", "clock",
+          fluidRow(
+            column(6, numericInput(ns("rt_min"), "RT min", value = 2,
+                                   min = 0, step = 0.5)),
+            column(6, numericInput(ns("rt_max"), "RT max", value = 19,
+                                   min = 0, step = 0.5))
+          ),
+          format_hint("Only minute bins whose RT (bin start + 1) falls in this range are kept. Default 2-19 reproduces the previous hard-coded behaviour.",
+                      "circle-info")
+        ),
+
         actionButton(ns("run"), "Run Analysis",
                      class = "btn-run btn-lg", icon = icon("play")),
 

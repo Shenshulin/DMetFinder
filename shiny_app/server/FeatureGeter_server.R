@@ -12,6 +12,23 @@
 MS1_SCAN_TYPE <- "FTMS - p ESI Full ms [100.0000-1500.0000]"
 
 # ------------------------------------------------------------
+# 内存/耗时探针（诊断用，不影响结果）
+# 2026-10-26: 一次运行把 R 撑到 16 GB 工作集、系统只剩 0.46 GB
+# 空闲内存，httpuv 再也发不出心跳，页面永久灰罩。日志里看不到
+# 任何报错，因为进程只是在换页，并没有抛错。这里按样品打印
+# gc 占用与阶段耗时，下一次运行就能定位是哪一步爆的。
+# ------------------------------------------------------------
+mem_probe <- function(tag) {
+  g <- tryCatch(gc(verbose = FALSE), error = function(e) NULL)
+  used_mb <- if (is.null(g)) NA_real_ else round(sum(g[, 2]), 1)
+  message(sprintf("[MEM] %-28s R_heap~%s MB | %s",
+                  tag,
+                  ifelse(is.na(used_mb), "?", format(used_mb, big.mark = ",")),
+                  format(Sys.time(), "%H:%M:%S")))
+  invisible(used_mb)
+}
+
+# ------------------------------------------------------------
 # Spectrum cleaning: keep the highest intensity peak within
 # ppm/Da windows (deconvolution), optional noise/topN filtering
 # ------------------------------------------------------------
@@ -326,29 +343,84 @@ read_ms_file <- function(filepath) {
   if (identical(ext, "raw")) {
 
     # ---------------- Thermo .raw (rawrr) ----------------
-    H <- rawrr::readFileHeader(rawfile = filepath)
-    S <- rawrr::readSpectrum(
-      rawfile = filepath,
-      scan = 1:H[["Number of scans"]],
-      mode = "profile"
-    )
+    # 2026-10-26: 原写法 rawrr::readSpectrum(scan = 1:N, mode="profile")
+    # 一次性把所有扫描读入。rawrr 每个 scan 对象同时带 profile 阵列
+    # （mZ，SA1.raw 约 28,112 点）和 centroid 流（centroid.mZ，约 1,809 点），
+    # 单张 444 KB；12,470 张 = 5.4 GB，再复制进 spectra 列表、再转
+    # data.frame，实测把 R 撑到 22 GB、系统内存耗尽、页面永久灰罩。
+    # 这里改为每 200 张一块读取，只保留 centroid 阵列，
+    # 单文件常驻约 0.3 GB，结果与原来一致（原本也只取 centroid 阵列）。
+    # 2026-10-26: msLevel 原先靠 scanType 与常量 MS1_SCAN_TYPE
+    # （"FTMS - p ESI …"，负离子）严格相等判断；正离子文件是
+    # "FTMS + p ESI …"，比对全部失败 -> SA1.raw 的 12,470 张全被当成
+    # MS2，MS1 分支一张也取不到，最终触发 "argument is of length zero"。
+    # 改以 index 的 MSOrder 为准（"Ms" = MS1），正负离子都成立。
+    idx <- rawrr::readIndex(filepath)
+    n_scans <- nrow(idx)
+    if (is.null(n_scans) || n_scans < 1L) {
+      stop("无法读取扫描索引（文件可能损坏或不是有效的 .raw）：", basename(filepath))
+    }
 
-    n <- length(S)
+    chunk <- 200L
+    starts <- seq.int(1L, n_scans, by = chunk)
+    scan_vec <- as.numeric(idx$scan)
+    # 不同 rawrr 版本 index 列名不同：新版给 StartTime（已是分钟），
+    # 老版给 RT（秒）。按列名自适应，避免整张表变成 0 行。
+    st_vec <- if ("StartTime" %in% names(idx)) {
+      as.numeric(idx$StartTime)
+    } else {
+      as.numeric(idx$RT) / 60
+    }
+    type_vec <- if ("scanType" %in% names(idx)) {
+      as.character(idx$scanType)
+    } else {
+      rep(NA_character_, n_scans)
+    }
+    ms_order <- if ("MSOrder" %in% names(idx)) as.character(idx$MSOrder) else NULL
+    prec_idx <- if ("precursorMass" %in% names(idx)) as.numeric(idx$precursorMass) else NULL
+    spectra  <- vector("list", n_scans)
+    pos <- 0L
 
-    # rawrr returns scan numbers as doubles; keep them as-is so that
-    # downstream output formatting matches the original implementation
-    scan_vec   <- vapply(S, function(x) as.numeric(x[["scan"]]), numeric(1))
-    st_vec     <- vapply(S, function(x) x[["StartTime"]], numeric(1))  # minutes
-    type_vec   <- vapply(S, function(x) x[["scanType"]], character(1))
+    for (s0 in starts) {
+      ids <- scan_vec[s0:min(s0 + chunk - 1L, n_scans)]
+      S <- rawrr::readSpectrum(rawfile = filepath, scan = ids, mode = "centroid")
+      for (x in S) {
+        pos <- pos + 1L
+        mz <- x[["centroid.mZ"]]
+        it <- x[["centroid.intensity"]]
+        # 少数扫描没有 centroid 流：退回 profile 阵列，避免整张谱丢失
+        if (is.null(mz) || length(mz) == 0L) {
+          mz <- x[["mZ"]]
+          it <- x[["intensity"]]
+        }
+        spectra[[pos]] <- list(mz = as.numeric(mz), intensity = as.numeric(it))
+      }
+      rm(S)
+      invisible(gc(verbose = FALSE))
+    }
 
-    # MS1 = the specific Thermo MS1 scan type, everything else = MS2
-    # (identical to the original scanType != MS1_SCAN_TYPE logic)
-    ms_level <- ifelse(type_vec == MS1_SCAN_TYPE, 1L, 2L)
+    if (pos < n_scans) {
+      scan_vec <- scan_vec[seq_len(pos)]
+      st_vec   <- st_vec[seq_len(pos)]
+      type_vec <- type_vec[seq_len(pos)]
+      spectra  <- spectra[seq_len(pos)]
+    }
 
-    # precursor m/z parsed from the Thermo scan type string
-    ms2_value <- as.numeric(
-      stringr::str_extract(type_vec, "(?<=ms2\\s)[^@]+")
-    )
+    # MS1 / MS2 以 index 的 MSOrder 为准（正负离子都适用）
+    ms_level <- if (is.null(ms_order)) {
+      ifelse(type_vec == MS1_SCAN_TYPE, 1L, 2L)
+    } else {
+      ifelse(ms_order[seq_len(pos)] == "Ms", 1L, 2L)
+    }
+
+    # 前体 m/z：优先用 index 的 precursorMass，缺失时回退到扫描类型字符串
+    ms2_value <- if (!is.null(prec_idx)) {
+      v <- prec_idx[seq_len(pos)]
+      v[!is.na(v) & v <= 0] <- NA_real_
+      v
+    } else {
+      as.numeric(stringr::str_extract(type_vec, "(?<=ms2\\s)[^@]+"))
+    }
 
     scan_table <- data.frame(
       scan = scan_vec,
@@ -359,12 +431,6 @@ read_ms_file <- function(filepath) {
       stringsAsFactors = FALSE
     )
 
-    spectra <- lapply(S, function(x) {
-      list(
-        mz = x[["centroid.mZ"]],
-        intensity = x[["centroid.intensity"]]
-      )
-    })
     names(spectra) <- as.character(scan_vec)
 
     # original behaviour: Thermo files were always written as Negative
@@ -459,6 +525,20 @@ FeatureGeter_server <- function(id){
     append_log(paste("工作目录设置为：", workdir))
 
     # ----------------------------------------------------------
+    # MS1 保留时间范围（分钟）。默认 2-19，等价于原先写死的
+    # keep_rt <- as.character(1:18)（分钟桶 label+1 = RT 2..19）。
+    rt_min_v <- suppressWarnings(as.numeric(input$rt_min))
+    rt_max_v <- suppressWarnings(as.numeric(input$rt_max))
+    if (is.na(rt_min_v)) rt_min_v <- 2
+    if (is.na(rt_max_v)) rt_max_v <- 19
+    if (rt_max_v < rt_min_v) {
+      append_log(paste0("RT 范围无效（max < min），已交换为：",
+                        rt_max_v, " - ", rt_min_v))
+      tmp <- rt_min_v; rt_min_v <- rt_max_v; rt_max_v <- tmp
+    }
+    append_log(sprintf("MS1 保留时间范围：%.1f - %.1f min", rt_min_v, rt_max_v))
+
+    # ----------------------------------------------------------
     # 进度条（不是装饰，是保活机制）
     # 整个流程写在同一个 observeEvent 里，是一次几十秒到几分钟的
     # 同步调用。每次 prog$set() 都会把控制权交还事件循环一次，
@@ -540,6 +620,9 @@ FeatureGeter_server <- function(id){
       st <- ms$scan_table
       spectra <- ms$spectra
       ion_modes[[sample_id]] <- ms$ion_mode
+      mem_probe(sprintf("%d/%d %s read (%d scans, %.1f MB file)", k, n_files,
+                        sample_id, nrow(st),
+                        file.size(msfile) / 1024^2))
       prog$set(detail = sprintf("解析 %d/%d：%s", k, n_files, sample_id))
 
       # ---------------- MS2 扫描信息表 ----------------
@@ -551,11 +634,22 @@ FeatureGeter_server <- function(id){
             ms2_value_vec <- ms2_value
             groups <- numeric(length(ms2_value_vec))
             current_group <- 1
-            threshold <- dplyr::first(ms2_value_vec) + 0.9
+            # guard: precursor m/z can be NA (missing precursor in mzML/MSE
+            # scans). NA breaks `if (v > threshold)` -> whole observer dies
+            # and the browser shows the gray disconnected overlay.
+            # Skip NA scans (keep them in the current group); seed the
+            # threshold from the first non-NA precursor.
+            first_valid <- which(!is.na(ms2_value_vec))
+            threshold <- if (length(first_valid)) {
+              ms2_value_vec[first_valid[1]] + 0.9
+            } else {
+              Inf
+            }
             for (i in seq_along(ms2_value_vec)) {
-              if (ms2_value_vec[i] > threshold) {
+              v <- ms2_value_vec[i]
+              if (!is.na(v) && v > threshold) {
                 current_group <- current_group + 1
-                threshold <- ms2_value_vec[i] + 0.9
+                threshold <- v + 0.9
               }
               groups[i] <- current_group
             }
@@ -568,7 +662,11 @@ FeatureGeter_server <- function(id){
       all_ms2_data[[sample_id]] <- i_ms2
 
       # ---------------- MS1 数据提取与清洗 ----------------
-      merged_centroids <- list()
+      # 原写法每个扫描都 bind_rows 一次，等于把该分钟已累积的表整份复制，
+      # 4 万次扫描就是 O(n^2) 的拷贝量与 GC 压力（实测一个样品能把 R
+      # 撑到 16 GB、耗掉 54 分钟 CPU）。这里改成"每分钟一个 list，最后
+      # 一次性 bind_rows"，结果完全一致，拷贝量降到 O(n)。
+      merged_chunks <- list()
       for (i in seq_len(nrow(st))) {
         if (st$msLevel[i] != 1) next
         spec <- spectra[[as.character(st$scan[i])]]
@@ -576,8 +674,10 @@ FeatureGeter_server <- function(id){
         minute_label <- floor(as.numeric(st$StartTime[i]))
         label <- as.character(minute_label)
         df <- data.frame(mz = spec$mz, intensity = spec$intensity)
-        merged_centroids[[label]] <- dplyr::bind_rows(merged_centroids[[label]], df)
+        merged_chunks[[label]][[length(merged_chunks[[label]]) + 1L]] <- df
       }
+      merged_centroids <- lapply(merged_chunks, function(lst) dplyr::bind_rows(lst))
+      rm(merged_chunks)
 
       cleaned_centroids <- list()
       for (label in names(merged_centroids)) {
@@ -601,10 +701,23 @@ FeatureGeter_server <- function(id){
         }
       }
 
-      keep_rt <- as.character(1:18)
+      # RT = 分钟桶 label + 1，只保留 RT 落在用户设定范围内的桶
+      # （默认 2-19，与原先写死的 keep_rt <- as.character(1:18) 等价）
+      keep_bins <- intersect(
+        (ceiling(rt_min_v) - 1L):(floor(rt_max_v) - 1L),
+        as.integer(names(cleaned_centroids))
+      )
+      keep_rt <- as.character(sort(keep_bins))
       subset_cleaned <- do.call(rbind, cleaned_centroids[keep_rt])
+      mem_probe(sprintf("%d/%d %s deconvolved (%d minute bins, %d peaks)",
+                        k, n_files, sample_id,
+                        length(merged_centroids),
+                        if (is.null(subset_cleaned)) 0L else nrow(subset_cleaned)))
 
-      if (nrow(subset_cleaned) > 0) {
+      # 所选 RT 范围里一个桶都没有时 do.call(rbind, list(NULL,...)) 返回 NULL，
+      # 原来的 `if (nrow(subset_cleaned) > 0)` 于是收到 logical(0)，
+      # 抛 "argument is of length zero"，整个 observer 直接崩掉。
+      if (!is.null(subset_cleaned) && nrow(subset_cleaned) > 0) {
         subset_cleaned$mz <- round(subset_cleaned$mz, 4)
         subset_cleaned$intensity <- round(subset_cleaned$intensity, 0)
         subset_cleaned$RT_mz <- as.numeric(paste0(subset_cleaned$RT, sprintf("%.4f", subset_cleaned$mz)))
@@ -651,6 +764,7 @@ FeatureGeter_server <- function(id){
       rm(ms, st, spectra, merged_centroids, cleaned_centroids,
          mgf_chunks, ms2_df)
       gc(verbose = FALSE)
+      mem_probe(sprintf("%d/%d %s released", k, n_files, sample_id))
 
       prog$set(value = 0.80 * k / n_files)
     }

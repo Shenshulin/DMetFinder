@@ -572,6 +572,38 @@ rtg_run_batch <- function(df, cols, files, tol, unit = "ppm", progress = NULL) {
 
 
 # ============================================================
+# RtGeter 运行日志落盘
+#
+# 原来日志只写进 reactiveVal（页面那个「运行日志」框），刷新页面或重启
+# 应用就没了，事后想复盘只能重跑一遍。这里额外写一份到
+# .workbuddy/logs/rgeter/ 下，同时镜像到控制台（shiny 启动日志）。
+# 任何写盘异常都被 tryCatch 吞掉，绝不影响主流程。
+# ============================================================
+RTG_LOG_DIR <- file.path(".workbuddy", "logs", "rgeter")
+
+rtg_file_logger <- function() {
+  path <- NULL
+  function(lines) {
+    if (length(lines) == 0L) return(invisible(NULL))
+    tryCatch({
+      if (is.null(path)) {
+        dir.create(RTG_LOG_DIR, recursive = TRUE, showWarnings = FALSE)
+        path <<- file.path(RTG_LOG_DIR, sprintf(
+          "rgeter_%s_pid%d.log",
+          format(Sys.time(), "%Y%m%d_%H%M%S"), Sys.getpid()))
+        writeLines(enc2utf8(sprintf("# RtGeter session @ %s",
+                                    format(Sys.time(), "%Y-%m-%d %H:%M:%S"))),
+                   path, useBytes = TRUE)
+      }
+      cat(enc2utf8(lines), file = path, sep = "\n", append = TRUE)
+      cat(enc2utf8(lines), sep = "\n", file = stderr())
+    }, error = function(e) invisible(NULL))
+    invisible(path)
+  }
+}
+
+
+# ============================================================
 # RtGeter module
 # ============================================================
 RtGeter_server <- function(id) {
@@ -579,12 +611,20 @@ RtGeter_server <- function(id) {
   moduleServer(id, function(input, output, session) {
 
     log_text <- reactiveVal("")
+    write_log_file <- rtg_file_logger()
     append_log <- function(msg) {
       if (length(msg) == 0) return(invisible(NULL))
       stamp <- format(Sys.time(), "[%H:%M:%S] ")
       log_text(paste0(log_text(), paste0(stamp, msg, "\n", collapse = "")))
+      write_log_file(paste0(stamp, msg))
     }
     output$log <- renderText(log_text())
+
+    output$dl_log <- downloadHandler(
+      filename = function() sprintf("RtGeter_log_%s.txt",
+                                    format(Sys.time(), "%Y%m%d_%H%M%S")),
+      content = function(file) writeLines(enc2utf8(log_text()), file, useBytes = TRUE)
+    )
 
     # ---------------- 目录内的质谱文件 ----------------
     files <- reactive({

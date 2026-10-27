@@ -33,6 +33,11 @@ data_for_paper/DMetFinder1.0.3/
 # Recipe: .workbuddy/tools/install_cpc.R ; the path differs per machine.
 .Renviron
 
+# Console dumps from ad-hoc `Rscript app.R &> _app_run_<port>.log` runs.
+# The RtGeter module now writes its own per-run log under .workbuddy/logs/,
+# which is ignored with the rest of .workbuddy/.
+_app_run_*.log
+
 # ---- OS / editor noise ----
 .DS_Store
 Thumbs.db

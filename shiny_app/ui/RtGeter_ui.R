@@ -73,6 +73,9 @@ RtGeter_ui <- function(id){
         ),
 
         side_group("Run Info", "terminal",
+          div(class = "table-tools",
+            downloadButton(ns("dl_log"), "Save log", class = "btn-soft btn-sm")
+          ),
           div(class = "log-box", verbatimTextOutput(ns("log")))
         )
       ),

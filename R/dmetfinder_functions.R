@@ -1098,6 +1098,57 @@ dmf_cols_merged_score <- function(p50_score) {
   dmf_sheet(paste0(g, p80_str, "离子和", other_g, "比对"), list(h1, h2), cols)
 }
 
+#' 两组样本的 t 检验 P 值（向量化，等价于 Excel 的 TTEST(a, b, 2, 2)）
+#'
+#' Excel 的 TTEST(array1, array2, tails=2, type=2) 是「双尾 + 双样本 + 等方差
+#' （pooled variance）」，对应 R 的 t.test(x, y, var.equal = TRUE) 的双尾 P 值。
+#' 这里不调用 t.test（每行一次太慢），直接按 pooled 公式向量化：
+#'   sp2 = ((n1-1)*v1 + (n2-1)*v2) / (n1+n2-2)
+#'   t   = (mean1 - mean2) / sqrt(sp2 * (1/n1 + 1/n2))
+#'   df  = n1 + n2 - 2
+#'   p   = 2 * pt(-|t|, df)
+#' NA 按 R 的常规做法逐格剔除（与 t.test 的 na.rm 行为一致）。
+#'
+#' @param m1,m2 数值矩阵，行 = 离子，列 = 样品
+#' @return 数值向量，长度 = nrow
+dmf_ttest_pval <- function(m1, m2) {
+  m1 <- as.matrix(m1)
+  m2 <- as.matrix(m2)
+  if (nrow(m1) == 0L) return(numeric(0))
+  storage.mode(m1) <- "double"
+  storage.mode(m2) <- "double"
+
+  n1 <- rowSums(!is.na(m1))
+  n2 <- rowSums(!is.na(m2))
+  m_1 <- rowSums(m1, na.rm = TRUE) / pmax(n1, 1L)
+  m_2 <- rowSums(m2, na.rm = TRUE) / pmax(n2, 1L)
+  # 平方和 - n*mean^2，浮点误差可能出极小负数，截到 0
+  ss1 <- pmax(rowSums(m1 * m1, na.rm = TRUE) - n1 * m_1 * m_1, 0)
+  ss2 <- pmax(rowSums(m2 * m2, na.rm = TRUE) - n2 * m_2 * m_2, 0)
+
+  v1 <- ifelse(n1 > 1L, ss1 / pmax(n1 - 1L, 1L), NA_real_)
+  v2 <- ifelse(n2 > 1L, ss2 / pmax(n2 - 1L, 1L), NA_real_)
+
+  df <- n1 + n2 - 2L
+  sp2 <- ((n1 - 1L) * v1 + (n2 - 1L) * v2) / df
+  se <- sqrt(sp2 * (1 / n1 + 1 / n2))
+  tval <- (m_1 - m_2) / se
+  p <- 2 * stats::pt(-abs(tval), df)
+
+  # 方差为 0（各组内强度全相同）时 se = 0，t 变成 Inf/NaN：
+  # 均值相同 -> p = 1，均值不同 -> p = 0（Excel 这两种情况会返回 #DIV/0!）
+  bad <- !is.finite(p) & is.finite(m_1) & is.finite(m_2)
+  if (any(bad)) {
+    same <- bad & abs(m_1 - m_2) <= 1e-12 * pmax(1, abs(m_1))
+    p[bad] <- 0
+    p[same] <- 1
+  }
+  # 每组至少 2 个有效值才谈得上组内方差
+  p[n1 < 2L | n2 < 2L] <- NA_real_
+  p[!is.finite(p)] <- NA_real_
+  p
+}
+
 .dmf_sheet_diff <- function(g_a, g_b, p80_str, diff, samples_a, samples_b) {
   n <- nrow(diff)
   h1 <- dmf_hdr(paste0(g_a, p80_str, "离子"), rep(NA, 18), paste0(g_a, "离子强度"),
@@ -1109,10 +1160,12 @@ dmf_cols_merged_score <- function(p50_score) {
                 as.list(as.numeric(samples_a)), list("-"),
                 as.list(as.numeric(samples_b)))
 
-  # P 值列：原版意图写 Excel 公式 =TTEST(U{r}:AD{r},AF{r}:AO{r},2,2)，
-  # 但 EasyExcel 实际写成了文本 "==TTEST(...)"。这里写真正的公式。
-  p_col <- sprintf("=TTEST(U%d:AD%d,AF%d:AO%d,2,2)", seq_len(n) + 2L,
-                   seq_len(n) + 2L, seq_len(n) + 2L, seq_len(n) + 2L)
+  # P 值列：原版写的是 Excel 公式 =TTEST(U{r}:AD{r},AF{r}:AO{r},2,2)，但
+  # openxlsx 的 writeData() 不会把 "=" 开头的字符串当公式（实测写进 xlsx 是
+  # t="s" 的共享字符串，没有 <f> 节点），Excel/WPS 打开就只显示公式原文；
+  # DT 预览同理。所以这里直接在 R 里把 P 值算成数值，两处输出都正常。
+  # 统计口径与 TTEST(...,2,2) 完全一致：双尾、双样本、等方差。
+  p_col <- dmf_ttest_pval(diff$inten1, diff$inten2)
 
   # 另一组 m/z：从 b 的 RT&m/z 字符串里按 b 的 rt 位数截掉前缀（原版做法：
   # int len = (int)Math.log10(b.rt) + 1; mz.substring(len)）
@@ -1149,19 +1202,42 @@ dmf_cols_merged_score <- function(p50_score) {
 # 10. 写盘（EasyExcel 输出结构的等价物）
 # ============================================================
 
+#' Excel 工作表名清洗：<=31 字符、不含 [ ] : * ? / \ 、不重复
+#'
+#' 组名较长时（例如 "Group A和Group B差异离子(Group A比Group B)"）原逻辑在
+#' addWorksheet 处直接报错中断整个导出，这里做一次清洗 + 去重。
+dmf_sheet_name <- function(name, used = character(0)) {
+  nm <- gsub("[\\[\\]:*?/\\\\]", "_", as.character(name))
+  nm <- substr(nm, 1L, 31L)
+  if (!nzchar(nm)) nm <- "Sheet"
+  if (nm %in% used) {
+    base <- substr(nm, 1L, 28L)
+    i <- 2L
+    while (paste0(base, "_", i) %in% used) i <- i + 1L
+    nm <- paste0(base, "_", i)
+  }
+  nm
+}
+
 #' 把 dmf_sheet 列表写成 xlsx
 #'
 #' 表头行逐行写（保留数值/文本类型），数据块整块写：全数值列走矩阵通道，
-#' 混合类型列走 data.frame 通道。以 "=" 开头的字符串由 openxlsx 写成公式。
+#' 混合类型列走 data.frame 通道。
+#' 注意：openxlsx::writeData() 不会把 "=" 开头的字符串当公式（写进 xlsx 是
+#' 共享字符串，没有 <f> 节点），要真公式必须用 writeFormula()。所以统计量
+#' （如 P 值）一律在 R 里算成数值再写，不要塞公式字符串。
 dmf_write_sheets <- function(sheets, path) {
   wb <- openxlsx::createWorkbook()
+  used <- character(0)
   for (sh in sheets) {
-    openxlsx::addWorksheet(wb, sh$name)
+    sname <- dmf_sheet_name(sh$name, used)
+    used <- c(used, sname)
+    openxlsx::addWorksheet(wb, sname)
     r <- 1L
     for (h in sh$header) {
       df <- as.data.frame(as.list(h), stringsAsFactors = FALSE,
                           check.names = FALSE, optional = TRUE)
-      openxlsx::writeData(wb, sh$name, df, startCol = 1L, startRow = r,
+      openxlsx::writeData(wb, sname, df, startCol = 1L, startRow = r,
                           colNames = FALSE, keepNA = FALSE)
       r <- r + 1L
     }
@@ -1170,12 +1246,12 @@ dmf_write_sheets <- function(sheets, path) {
       all_num <- all(vapply(cols, function(x) is.numeric(x) || is.integer(x), logical(1)))
       if (all_num) {
         m <- do.call(cbind, cols)
-        openxlsx::writeData(wb, sh$name, m, startCol = 1L, startRow = r,
+        openxlsx::writeData(wb, sname, m, startCol = 1L, startRow = r,
                             colNames = FALSE, keepNA = FALSE)
       } else {
         df <- as.data.frame(cols, stringsAsFactors = FALSE, check.names = FALSE,
                             optional = TRUE)
-        openxlsx::writeData(wb, sh$name, df, startCol = 1L, startRow = r,
+        openxlsx::writeData(wb, sname, df, startCol = 1L, startRow = r,
                             colNames = FALSE, keepNA = FALSE)
       }
     }
