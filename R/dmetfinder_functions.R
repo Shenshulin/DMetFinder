@@ -352,15 +352,23 @@ dmf_bsearch_java <- function(sorted_key, target) {
 #' 这一顺序会影响原版的稳定排序与 findIon 的 tie-break，必须保持。
 #'
 #' @param path Excel 路径
-#' @param block_width 每样品列数，默认 6
+#' @param block_width 每样品列数；NA（默认）自动识别：表头出现 RT_apex
+#'   即按 7 列切块（新格式），否则按 6 列（旧格式）
 #' @return list(sample_names, ions)，ions 为 data.frame：
-#'   no(字符串), no_int, rt, rt_mz, no_mz, mz, rt_no_mz, intensity, col
-dmf_read_samples <- function(path, block_width = 6L) {
+#'   no(字符串), no_int, rt, rt_mz, no_mz, mz, rt_no_mz, intensity, col,
+#'   rt_apex（亚分钟 apex RT，仅新格式有；旧格式为 NA）
+dmf_read_samples <- function(path, block_width = NA) {
   if (!file.exists(path)) stop("找不到数据文件：", path)
 
   raw <- readxl::read_excel(path, col_names = FALSE, .name_repair = "minimal")
   raw <- as.data.frame(raw, stringsAsFactors = FALSE)
   if (nrow(raw) < 2L) stop("数据文件除表头外没有数据行：", path)
+
+  # readxl 读到的第一行就是 xlsx 的表头文字（数据行从第二行起，见下）。
+  # RT_apex 是 Ms1Geter 新增的亚分钟 RT 列，有它就多一列，块宽 6 -> 7。
+  hdr <- trimws(as.character(raw[1L, ]))
+  has_rt <- any(hdr == "RT_apex")
+  if (is.na(block_width)) block_width <- if (has_rt) 7L else 6L
 
   # EasyExcel 默认 headRowNumber = 1：第一行被当作表头丢弃
   data <- raw[-1L, , drop = FALSE]
@@ -384,8 +392,13 @@ dmf_read_samples <- function(path, block_width = 6L) {
     inten <- suppressWarnings(as.numeric(data[[s + 4L]]))
     ok <- !is.na(no) & !is.na(rt) & !is.na(rtmz) & !is.na(mz) & !is.na(inten)
     if (!any(ok)) return(NULL)
-    data.frame(block = j, no_num = no[ok], rt = rt[ok], rt_mz_raw = rtmz[ok],
-               mz_raw = mz[ok], intensity = inten[ok], stringsAsFactors = FALSE)
+    out <- data.frame(block = j, no_num = no[ok], rt = rt[ok], rt_mz_raw = rtmz[ok],
+                      mz_raw = mz[ok], intensity = inten[ok], stringsAsFactors = FALSE)
+    if (has_rt) {
+      rtx <- suppressWarnings(as.numeric(data[[s + 5L]]))
+      out$rt_apex <- rtx[ok]
+    }
+    out
   })
   blocks <- blocks[!vapply(blocks, is.null, logical(1))]
   if (length(blocks) == 0L) stop("没有读到任何离子数据：", path)
@@ -439,6 +452,7 @@ dmf_read_samples <- function(path, block_width = 6L) {
       rt_no_mz_f8 = parts$f8,
       intensity = ions$intensity,
       col      = col_of_block[ions$block],
+      rt_apex  = if (is.null(ions$rt_apex)) NA_real_ else ions$rt_apex,
       stringsAsFactors = FALSE
     )
   )
@@ -455,26 +469,91 @@ dmf_read_samples <- function(path, block_width = 6L) {
 #' 按样品编号放入 MatrixRow（同一样品先到先得），
 #' count = 出现的样品数，averageIntensity = 强度和 / count（7 位 HALF_UP）。
 #'
+#' `pick` 控制"同一样品在窗口内命中多个离子时取哪一个"：
+#'   - "first"（默认，与原版 Java 一致）：按离子原始下标升序取第一个；
+#'   - "max"：取窗口内强度最大的那个。
+#' 两者对"一条离子在窗口内只有一支"的数据完全等价；只有当同一特征在窗口内
+#' 裂成多支 m/z 时才有差别。选支不稳会让该样品强度在强弱支之间跳变，
+#' 进而把组均值与倍数变化带偏，故 "max" 是更稳的口径。
+#'
 #' @param ions dmf_read_samples() 得到的离子表
 #' @param n_samples 样品数
-#' @param error_range 组内匹配容差
+#' @param error_range 组内匹配容差（Da）
 #' @param digits 均值小数位
+#' @param pick "first" 或 "max"，见上
+#' @param rt_tol 额外的时间维度容差（分钟）。0（默认）= 只用 rt_mz 键，
+#'   即原版的「同一整数分钟桶 + ±ErrorRange」；>0 时改用
+#'   「±ErrorRange 且 |apex RT 差| ≤ rt_tol」，行身份因此需要 Ms1Geter
+#'   输出的 RT_apex 列，缺失该列时退回 0 的行为。
 #' @return ions 追加 count / avg / mat（n_ions × n_samples，缺测为 NA）
-dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L) {
+dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L,
+                              pick = c("first", "max"), rt_tol = 0) {
+  pick <- match.arg(pick)
   n <- nrow(ions)
-  o <- order(ions$rt_mz)
-  ks <- ions$rt_mz[o]
 
-  b <- dmf_window_bounds(ks, ks, error_range)
-  w <- b$hi - b$lo + 1L
-  if (any(w < 1L)) stop("存在空的匹配窗口，数据或误差范围异常")
+  use_rt <- length(rt_tol) == 1L && is.numeric(rt_tol) && is.finite(rt_tol) &&
+    rt_tol > 0 && !is.null(ions$rt_apex) && any(is.finite(ions$rt_apex))
 
-  ion_ion <- o[rep.int(seq_len(n), w)]
-  mem_ion <- o[sequence(w, from = b$lo)]
+  if (!use_rt) {
+    o <- order(ions$rt_mz)
+    ks <- ions$rt_mz[o]
+
+    b <- dmf_window_bounds(ks, ks, error_range)
+    w <- b$hi - b$lo + 1L
+    if (any(w < 1L)) stop("存在空的匹配窗口，数据或误差范围异常")
+
+    ion_ion <- o[rep.int(seq_len(n), w)]
+    mem_ion <- o[sequence(w, from = b$lo)]
+  } else {
+    # ---- 两维窗口：m/z（±ErrorRange）∩ apex RT（±rt_tol）----
+    # 键 = floor(RT/rt_tol) * 1e8 + round(m/z*1e4)，按此键排序后，
+    # 同类 membership 在同一 RT 分箱内仍是一段连续区间（箱内按 m/z 排），
+    # 故可沿用 findInterval；相邻分箱各查一次，再用真实 RT 差过滤。
+    # 分箱宽度 = rt_tol，差 ≤ rt_tol 的两行箱号至多差 1，故三次查询完备。
+    rt <- ions$rt_apex
+    bad <- !is.finite(rt)
+    if (any(bad)) rt[bad] <- ions$rt[bad]      # 缺 apex RT 的行退回整分钟桶
+    mz4 <- round(ions$mz * 1e4)                # m/z 的整数表示（1e-4 Da）
+    off <- 1e8
+    bnx <- floor(rt / rt_tol)
+    k2  <- bnx * off + mz4
+
+    o  <- order(k2)
+    ks <- k2[o]
+    err <- error_range * 1e4                   # 键单位换算成 1e-4 Da
+
+    grab <- function(target, check_rt) {
+      bb <- dmf_window_bounds(ks, target, err)
+      ww <- bb$hi - bb$lo + 1L
+      # 相邻分箱查不到东西是正常的（那一箱可能没有相近 m/z 的离子）；
+      # 自己那一箱必须至少命中自己。
+      if (!check_rt && any(ww < 1L)) {
+        stop("存在空的匹配窗口，数据或误差范围异常")
+      }
+      ii <- rep.int(seq_len(n), ww)
+      mm <- o[sequence(ww, from = bb$lo)]
+      if (check_rt) {
+        keep <- abs(rt[mm] - rt[ii]) <= rt_tol + 1e-9
+        ii <- ii[keep]
+        mm <- mm[keep]
+      }
+      list(ii = ii, mm = mm)
+    }
+    e0 <- grab(k2, FALSE)                       # 同箱：RT 差必 < rt_tol，无需再滤
+    e1 <- grab((bnx + 1L) * off + mz4, TRUE)    # 后一箱
+    e2 <- grab((bnx - 1L) * off + mz4, TRUE)    # 前一箱
+    ion_ion <- c(e0$ii, e1$ii, e2$ii)
+    mem_ion <- c(e0$mm, e1$mm, e2$mm)
+    rm(e0, e1, e2)
+  }
   col_mem <- ions$col[mem_ion]
 
-  # 同一窗口内按"原始下标升序"遍历，同一样品先到先得
-  ord <- order(ion_ion, mem_ion)
+  # 排序键决定「先到先得」的语义：first = 原始下标升序；max = 强度降序
+  ord <- if (identical(pick, "max")) {
+    order(ion_ion, -ions$intensity[mem_ion], mem_ion)
+  } else {
+    order(ion_ion, mem_ion)
+  }
   ion_ion <- ion_ion[ord]
   mem_ion <- mem_ion[ord]
   col_mem <- col_mem[ord]
@@ -1308,7 +1387,13 @@ dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
 
   step(0.18, sprintf("开始初始化矩阵（%d 个离子 / %d 个样品）",
                      nrow(rd$ions), length(rd$sample_names)))
-  ions <- dmf_create_matrix(rd$ions, length(rd$sample_names), cfg$ErrorRange, cfg$FloatCount)
+  pick_cfg <- cfg$MatrixPick
+  if (is.null(pick_cfg) || !length(pick_cfg) || is.na(pick_cfg)) pick_cfg <- "first"
+  rt_tol <- cfg$ClusterRtTol
+  if (is.null(rt_tol) || !length(rt_tol) || !is.numeric(rt_tol) ||
+      is.na(rt_tol) || rt_tol < 0) rt_tol <- 0
+  ions <- dmf_create_matrix(rd$ions, length(rd$sample_names), cfg$ErrorRange,
+                            cfg$FloatCount, pick_cfg, rt_tol)
 
   n_sample <- length(rd$sample_names)
   # 50% 阈值：(int)(p50 * n) 截断；80% 阈值：(int)ceil(p80 * n)
