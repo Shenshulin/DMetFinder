@@ -273,9 +273,9 @@ looks_like_profile <- function(mz) {
 # ------------------------------------------------------------
 # Collapse profile peak list into centroid-like peaks:
 # keep the apex point of each profile peak cluster
-# (20 ppm anchor window)
+# (anchor window = the ppm setting chosen in the UI)
 # ------------------------------------------------------------
-centroid_profile_peaks <- function(mz, intensity) {
+centroid_profile_peaks <- function(mz, intensity, ppm = 10) {
 
   if (length(mz) == 0) {
     return(list(mz = numeric(), intensity = numeric()))
@@ -287,7 +287,7 @@ centroid_profile_peaks <- function(mz, intensity) {
     max_mz = 1500,
     noise_threshold = 0,
     min_ms2_difference_in_da = -1,
-    min_ms2_difference_in_ppm = 20,
+    min_ms2_difference_in_ppm = ppm,
     max_peak_num = -1,
     normalize_intensity = FALSE
   )
@@ -336,7 +336,7 @@ infer_ion_mode <- function(polarity_vec) {
 #                 each element = list(mz, intensity) [centroided peaks]
 #   $ion_mode   : "Negative" / "Positive"
 # ------------------------------------------------------------
-read_ms_file <- function(filepath) {
+read_ms_file <- function(filepath, ppm = 10) {
 
   ext <- tolower(tools::file_ext(filepath))
 
@@ -489,7 +489,7 @@ read_ms_file <- function(filepath) {
       int_i <- as.numeric(p[, 2])
 
       if (looks_like_profile(mz_i)) {
-        cp <- centroid_profile_peaks(mz_i, int_i)
+        cp <- centroid_profile_peaks(mz_i, int_i, ppm = ppm)
         mz_i  <- cp$mz
         int_i <- cp$intensity
       }
@@ -525,18 +525,51 @@ FeatureGeter_server <- function(id){
     append_log(paste("工作目录设置为：", workdir))
 
     # ----------------------------------------------------------
-    # MS1 保留时间范围（分钟）。默认 2-19，等价于原先写死的
-    # keep_rt <- as.character(1:18)（分钟桶 label+1 = RT 2..19）。
+    # 实际保留时间范围（分钟）——界面填的是「采集时间」，不是输出的 RT。
+    #
+    # 输出 RT 的定义是「1 分钟桶的右端点」：RT = 桶号 + 1，桶号覆盖
+    # (桶号, 桶号+1]。所以用户写 1-10 min，落到桶号 1..10，输出 RT 就是
+    # 2-11。默认 1-18 -> RT 2-19，与原先写死的 keep_rt <- 1:18 等价。
     rt_min_v <- suppressWarnings(as.numeric(input$rt_min))
     rt_max_v <- suppressWarnings(as.numeric(input$rt_max))
-    if (is.na(rt_min_v)) rt_min_v <- 2
-    if (is.na(rt_max_v)) rt_max_v <- 19
+    if (is.na(rt_min_v)) rt_min_v <- 1
+    if (is.na(rt_max_v)) rt_max_v <- 18
     if (rt_max_v < rt_min_v) {
       append_log(paste0("RT 范围无效（max < min），已交换为：",
-                        rt_max_v, " - ", rt_min_v))
+                        rt_min_v, " - ", rt_max_v))
       tmp <- rt_min_v; rt_min_v <- rt_max_v; rt_max_v <- tmp
     }
-    append_log(sprintf("MS1 保留时间范围：%.1f - %.1f min", rt_min_v, rt_max_v))
+    # 桶号 = 截取到的整数分钟；桶号 + 1 才是写进 RT 列的值。
+    bin_from <- as.integer(ceiling(rt_min_v))
+    bin_to   <- as.integer(floor(rt_max_v))
+    append_log(sprintf("实际保留时间 %.1f - %.1f min -> 输出 RT 记作 %d - %d min",
+                       rt_min_v, rt_max_v, bin_from + 1L, bin_to + 1L))
+
+    # ----------------------------------------------------------
+    # 峰强度下限。去卷积（按 ppm 窗口取最强）之后、RT 筛桶之前执行，
+    # 低于该值的峰直接丢弃。默认 10000，与原先写死的
+    # cleaned_df$intensity > 10000 完全一致；调低可换取更多低丰度
+    # 离子（检出率上升，但定量噪声也随之进来）。
+    min_int_v <- suppressWarnings(as.numeric(input$min_intensity))
+    if (is.na(min_int_v) || min_int_v < 0) min_int_v <- 10000
+    append_log(sprintf("峰强度下限：%.0f（去卷积后强度不超过该值的峰丢弃）", min_int_v))
+
+    # ----------------------------------------------------------
+    # 去卷积窗口（相对质量容差，ppm）。同一分钟桶里堆起来的所有峰
+    # 按这个窗口归簇、每簇只留最强的一个。默认 10 ppm 与原先写死的
+    # min_ms2_difference_in_ppm = 10 完全一致；窗口越宽归并越激进，
+    # 能消掉同一离子的近重复行，但可能把两个真正分开的离子并掉。
+    # 界面限定 5-30 ppm、步长 5，这里再兜一层：越界夹紧、非整数倍
+    # 就近取整，保证实际生效的窗口只会是 5/10/15/20/25/30。
+    ppm_v <- suppressWarnings(as.numeric(input$ppm_tol))
+    if (is.na(ppm_v)) ppm_v <- 10
+    ppm_eff <- min(max(round(ppm_v / 5) * 5, 5), 30)
+    if (!isTRUE(all.equal(ppm_eff, ppm_v))) {
+      append_log(sprintf("去卷积窗口 %.1f ppm 不符合 5-30 / 步长 5，按 %.0f ppm 执行",
+                         ppm_v, ppm_eff))
+    }
+    ppm_v <- ppm_eff
+    append_log(sprintf("去卷积窗口：%.0f ppm（同桶内按此相对质量容差归簇，每簇取最强）", ppm_v))
 
     # ----------------------------------------------------------
     # 进度条（不是装饰，是保活机制）
@@ -616,7 +649,7 @@ FeatureGeter_server <- function(id){
         next
       }
 
-      ms <- read_ms_file(msfile)
+      ms <- read_ms_file(msfile, ppm = ppm_v)
       st <- ms$scan_table
       spectra <- ms$spectra
       ion_modes[[sample_id]] <- ms$ion_mode
@@ -673,7 +706,11 @@ FeatureGeter_server <- function(id){
         if (is.null(spec) || is.null(spec$mz) || length(spec$mz) == 0) next
         minute_label <- floor(as.numeric(st$StartTime[i]))
         label <- as.character(minute_label)
-        df <- data.frame(mz = spec$mz, intensity = spec$intensity)
+        # rt_scan：这条质心来自哪张扫描（分钟，亚分钟精度）。去卷积只按行取子集，
+        # 所以被选中的那条峰天然带着它所属扫描的 RT —— RT_apex 就是这么来的，
+        # 不需要二次读谱（CLI 的 msg-extract 同口径）。
+        df <- data.frame(mz = spec$mz, intensity = spec$intensity,
+                         rt_scan = as.numeric(st$StartTime[i]))
         merged_chunks[[label]][[length(merged_chunks[[label]]) + 1L]] <- df
       }
       merged_centroids <- lapply(merged_chunks, function(lst) dplyr::bind_rows(lst))
@@ -683,30 +720,42 @@ FeatureGeter_server <- function(id){
       for (label in names(merged_centroids)) {
         peaks <- merged_centroids[[label]]
         if (nrow(peaks) >= 2) {
+          # 去卷积只认 mz / intensity 两列（函数内部会强行改列名），
+          # 因此单独喂两列，再按 (mz, intensity) 把 rt_scan 接回来。
           cleaned_mat <- clean_spectrum_keep_max(
-            as.matrix(peaks),
+            as.matrix(peaks[, c("mz", "intensity")]),
             min_mz = 0,
             max_mz = 1500,
             noise_threshold = 0,
             min_ms2_difference_in_da = -1,
-            min_ms2_difference_in_ppm = 10,
+            min_ms2_difference_in_ppm = ppm_v,
             max_peak_num = -1,
             normalize_intensity = FALSE
           )
           cleaned_df <- as.data.frame(cleaned_mat)
           colnames(cleaned_df) <- c("mz", "intensity")
-          cleaned_df <- cleaned_df[cleaned_df$intensity > (10000), ]
+          cleaned_df <- cleaned_df[cleaned_df$intensity > min_int_v, ]
+          # RT_apex：簇内最强峰所属扫描的保留时间（分钟，亚分钟精度）。
+          # 同一分钟桶内若出现 (mz, intensity) 完全相同的重复行，取第一张扫描
+          # —— 反正都在同一分钟桶里，最坏也只退回整分钟口径。
+          if (nrow(cleaned_df) > 0L) {
+            key_out <- paste(cleaned_df$mz, cleaned_df$intensity, sep = "|")
+            key_in  <- paste(peaks$mz, peaks$intensity, sep = "|")
+            idx <- match(key_out, key_in)
+            cleaned_df$RT_apex <- peaks$rt_scan[idx]
+          } else {
+            cleaned_df$RT_apex <- numeric(0)
+          }
           cleaned_df$RT <- as.numeric(label) + 1
           cleaned_centroids[[label]] <- cleaned_df
         }
       }
 
-      # RT = 分钟桶 label + 1，只保留 RT 落在用户设定范围内的桶
-      # （默认 2-19，与原先写死的 keep_rt <- as.character(1:18) 等价）
-      keep_bins <- intersect(
-        (ceiling(rt_min_v) - 1L):(floor(rt_max_v) - 1L),
-        as.integer(names(cleaned_centroids))
-      )
+      # 只保留桶号落在 [bin_from, bin_to] 的分钟桶。
+      # 桶号 n 的 RT 列写 n+1，所以实际时间 1-10 min 输出的是 RT 2-11。
+      keep_bins <- if (bin_to < bin_from) integer(0) else {
+        intersect(bin_from:bin_to, as.integer(names(cleaned_centroids)))
+      }
       keep_rt <- as.character(sort(keep_bins))
       subset_cleaned <- do.call(rbind, cleaned_centroids[keep_rt])
       mem_probe(sprintf("%d/%d %s deconvolved (%d minute bins, %d peaks)",
@@ -722,11 +771,17 @@ FeatureGeter_server <- function(id){
         subset_cleaned$intensity <- round(subset_cleaned$intensity, 0)
         subset_cleaned$RT_mz <- as.numeric(paste0(subset_cleaned$RT, sprintf("%.4f", subset_cleaned$mz)))
         subset_cleaned$Sample <- sample_id
-        subset_cleaned <- subset_cleaned %>% select(Sample, RT, RT_mz, mz, intensity)
+        if (!"RT_apex" %in% colnames(subset_cleaned)) {
+          subset_cleaned$RT_apex <- NA_real_
+        }
+        subset_cleaned$RT_apex <- round(subset_cleaned$RT_apex, 4)
+        # 列序 = CLI 的 msg-extract 输出（含 RT_apex 共 6 列），
+        # 写 xlsx 时每块 6 列 + 1 空列 = 块宽 7，dmf_read_samples 自动识别。
+        subset_cleaned <- subset_cleaned %>% select(Sample, RT, RT_mz, mz, intensity, RT_apex)
       } else {
         subset_cleaned <- data.frame(Sample = sample_id, RT = numeric(),
                                      RT_mz = character(), mz = numeric(),
-                                     intensity = numeric())
+                                     intensity = numeric(), RT_apex = numeric())
       }
 
       all_samples_data[[sample_id]] <- subset_cleaned
@@ -792,7 +847,7 @@ FeatureGeter_server <- function(id){
 
     # ----------------------------------------------------------
     # Clean_MS1_Data_Group*.xlsx 的 Sample 列必须写纯数字。
-    # 下游 dmf_read_samples() 会对每个 6 列块的首行做 as.numeric()，
+    # 下游 dmf_read_samples() 会对每个样品块（6 列数据 + 1 空列 = 块宽 7）的首行做 as.numeric()，
     # 遇到 "P173" 得到 NA，整列判空后直接报"首行没有任何样品编号"。
     # 只改这一列的输出值：all_samples_data 的 key（= 文件名）保持不变，
     # MS2_Group_Info.csv 与 MGF 的 NAME 仍是原始文件名，便于追溯。

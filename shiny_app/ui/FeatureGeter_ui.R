@@ -22,14 +22,25 @@ FeatureGeter_ui <- function(id){
                     accept = c(".csv", ".xlsx"))
         ),
 
-        side_group("Time Range (min)", "clock",
+        side_group("Time & Intensity", "clock",
           fluidRow(
-            column(6, numericInput(ns("rt_min"), "RT min", value = 2,
+            column(6, numericInput(ns("rt_min"), "Actual RT min", value = 1,
                                    min = 0, step = 0.5)),
-            column(6, numericInput(ns("rt_max"), "RT max", value = 19,
+            column(6, numericInput(ns("rt_max"), "Actual RT max", value = 18,
                                    min = 0, step = 0.5))
           ),
-          format_hint("Only minute bins whose RT (bin start + 1) falls in this range are kept. Default 2-19 reproduces the previous hard-coded behaviour.",
+          format_hint("These are the acquisition times you actually care about, not the RT values written to the output. A window of 1-10 min is recorded as RT 2-11 min, because RT is the right edge of each 1-minute bin (RT = bin index + 1). Default 1-18 produces RT 2-19, i.e. the previous hard-coded behaviour.",
+                      "circle-info"),
+          numericInput(ns("min_intensity"), "Min peak intensity",
+                       value = 10000, min = 0, step = 1000),
+          format_hint("Peaks at or below the intensity floor are dropped after deconvolution; default 10000 is the value that used to be hard-coded.",
+                      "circle-info")
+        ),
+
+        side_group("Deconvolution", "layer-group",
+          numericInput(ns("ppm_tol"), "Clustering window (ppm)",
+                       value = 10, min = 5, max = 30, step = 5),
+          format_hint("Peaks stacked inside one minute bin are clustered by this relative m/z window and only the most intense member of each cluster is kept. Range 5-30 ppm, step 5. 10 ppm is the previous hard-coded value; a wider window merges more aggressively, which removes near-duplicate rows but can also merge two genuinely resolved ions. Profile-mode input is collapsed to centroids with the same window, so it must be wider than one peak width there (>=20 ppm for typical profile data).",
                       "circle-info")
         ),
 

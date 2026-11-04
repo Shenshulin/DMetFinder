@@ -20,5 +20,9 @@ server <- function(input, output, session) {
   RtGeter_server("RtGeter")
 
   # ============ Peak Quality Server ============
-  peak_quality_server("PeakQuality")
+  # 与 ui/main_ui.R 共用同一个开关（R/config.R 的 ui_show_peak_quality）：
+  # 页签不展示时连 server 也不挂载，避免无人使用的后台计算。
+  if (isTRUE(ui_show_peak_quality)) {
+    peak_quality_server("PeakQuality")
+  }
 }
