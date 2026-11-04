@@ -1,0 +1,10 @@
+﻿package,min_version,required,install_from,purpose
+openxlsx,4.2.5,yes,CRAN,Write the 18-sheet xlsx workbooks (only with --xlsx)
+readxl,1.4.0,yes,CRAN,Read the input xlsx workbooks (groupA / groupB)
+jsonlite,1.8.0,yes,CRAN,JSON envelope on stdout and run.json on disk
+data.table,1.14.0,yes,CRAN,fwrite for the 18 CSV tables
+digest,0.6.29,yes,CRAN,sha256 of every input and output file (reproducibility)
+renv,1.0.0,no,CRAN,"Optional: restore exact versions from renv.lock"
+mzR,2.30.0,no,Bioconductor,"Optional: msg-extract / rt-apex read mzML/mzXML"
+rawrr,1.6.0,no,Bioconductor,"Optional: msg-extract / rt-apex read Thermo .raw (needs .NET Runtime too)"
+stringr,1.4.0,no,CRAN,"Optional: upstream read_ms_file() uses it for .raw only"

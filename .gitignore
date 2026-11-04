@@ -38,7 +38,21 @@ data_for_paper/DMetFinder1.0.3/
 # which is ignored with the rest of .workbuddy/.
 _app_run_*.log
 
+# ---- CLI run outputs (cli/dmf.R) ----
+# Each run writes ~230 MB of CSV plus, with --xlsx, ~200 MB of workbooks.
+# They are regenerated from demo_data/ in under a minute; never commit them.
+out/
+
 # ---- OS / editor noise ----
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Agent CLI distribution archives (built by tools/make_dist.R)
+dist/
+
+# Test fixtures: the mzML slice is ~27 MB, regenerate with tests/agent/README.md
+tests/agent/fixtures/ms/
+
+# `dmf.R inspect` demo output (regenerate with tools/peek_xlsx.R / cli)
+demo_data/inspect/
