@@ -1,69 +1,127 @@
 # ============================================================
 # DMetFinder core algorithms
 # ------------------------------------------------------------
-# 本文件是原版 Java 程序 DMetFinder.exe（corvida.core.*）的忠实移植。
+# This file is a faithful port of the original Java program DMetFinder.exe
+# (corvida.core.*).
 #
-# 对齐依据：exe4j overlay 解密后的内嵌 jar 反编译源码，关键类
-#   corvida.core.io.AnalysisIonListener   （数据读取、键构造）
-#   corvida.core.collection.impl.IonsManager2 / Helper（区间检索、唯一化）
-#   corvida.core.calc.IonCalculator       （筛选、打分、同位素、跨组比对）
-#   corvida.core.utils.BigDecimalHelper / CalcTools（精度与打分语义）
+# Basis for parity: the decompiled source of the embedded jar recovered from
+# the exe4j overlay. Key classes:
+#   corvida.core.io.AnalysisIonListener   (data reading, key construction)
+#   corvida.core.collection.impl.IonsManager2 / Helper (window search, dedup.)
+#   corvida.core.calc.IonCalculator       (filtering, scoring, isotopes,
+#                                          cross-group comparison)
+#   corvida.core.utils.BigDecimalHelper / CalcTools (precision, score semantics)
 #
-# 与旧版 R 实现的根本差别（旧版是简化近似，会导致结果数量级不一致）：
-#   1. 离子对象带 noMz / rtNoMz 两个"拼接键"，原版的全部去重与打分都建立在
-#      这两个键上，旧版完全没有；
-#   2. 50% / 80% 阈值筛选之后必须再跑 distinctIons() 唯一化（最多两轮），
-#      旧版漏掉了这一步；
-#   3. count / averageIntensity 由 MatrixRow 按"样品编号"归并得到（同一
-#      样品内重复命中去重，之后求均值），旧版按参考样品展开再统计，口径不同；
-#   4. 50% 离子打分与全离子打分是两套独立打分表（后者还分 noMz / rtMz 两个
-#      维度），旧版只实现了一套 5 列的简化打分。
+# Fundamental differences from the earlier R implementation, which was a
+# simplified approximation and produced results off by orders of magnitude:
+#   1. The ion object carries two concatenated keys, noMz and rtNoMz. In the
+#      original every deduplication and scoring step is built on those two
+#      keys; the old version had neither.
+#   2. After the 50% / 80% threshold filter, distinctIons() must run again
+#      (at most two rounds). The old version skipped this step.
+#   3. count / averageIntensity are aggregated by MatrixRow keyed on sample
+#      number (duplicate hits inside one sample are deduplicated first, then
+#      averaged). The old version expanded per reference sample and counted
+#      afterwards, which is a different convention.
+#   4. 50% ion scoring and all-ion scoring are two independent score tables
+#      (the latter has both a noMz and an rtMz dimension). The old version
+#      implemented only one simplified 5-column score.
 #
-# 数值语义上用 double 复刻 BigDecimal：
-#   truncate(x)  = (x + 1e-10) 向零截断到 8 位小数
-#   divideD(a,b) = a / b 四舍五入（HALF_UP）到 FloatCount(=7) 位
-# 区间检索复刻 Helper.binarySearch：窗口为 [target-e+1e-9, target+e-1e-9]
-# 的开区间，命中集合按"原始下标"升序返回，findIon 取第一个。
+# Numeric semantics reproduce BigDecimal with double:
+#   truncate(x)  = (x + 1e-10) truncated toward zero to 8 decimals
+#   divideD(a,b) = a / b rounded half up (HALF_UP) to FloatCount (= 7) digits
+# The window search reproduces Helper.binarySearch: the window is the open
+# interval [target-e+1e-9, target+e-1e-9], hits come back in ascending order of
+# the original row index, and findIon takes the first of them.
 # ============================================================
 
 
 # ============================================================
-# 0. 常量（与原版字面量一致）
+# 0. Constants (identical to the original literals)
 # ============================================================
 
-# Helper.binarySearch 里的 fixOffset = new BigDecimal("0.000000001")
+# fixOffset inside Helper.binarySearch = new BigDecimal("0.000000001")
 .dmf_fix_offset <- 1e-9
 # BigDecimalHelper.TRUNCATE_NUMBER = new BigDecimal("0.0000000001")
 .dmf_truncate_num <- 1e-10
-# BigDecimalHelper.truncate 的 setScale(8, DOWN)
+# setScale(8, DOWN) of BigDecimalHelper.truncate
 .dmf_truncate_scale <- 1e8
 
 
 # ============================================================
-# 1. BigDecimal 数值语义
+# 0b. Mass tolerance: the two units, Da and ppm
+# ============================================================
+# The original Java tolerance is a fixed 0.002 Da, which is unrealistic on real
+# data: mass error in MS is roughly proportional to m/z, so a fixed Da window is
+# relatively too wide at low m/z and too narrow at high m/z. In ppm mode the
+# tolerance is converted from each ion's own m/z:
+#     tol_i = mz_i * ppm * 1e-6
+# so "how wide the match is" stays the same across the whole m/z range.
+#
+# In the implementation, Da mode still returns a **scalar** and
+# window_bounds / argmin_in_window take the original path written to reproduce
+# BigDecimal, not one character changed; ppm mode returns a vector as long as
+# the ion table and takes .dmf_window_bounds_vec(). The two paths are kept
+# independent on purpose: reproducing the original requires the Da path
+# exactly, and any "convenient unification" breaks cell-by-cell parity.
+
+#' Convert the configured tolerance into a per-row tolerance in Da
+#'
+#' @param mz ion m/z vector (one-to-one with the later target)
+#' @param value tolerance value, unit given by \code{unit}
+#' @param unit "ppm" or "Da"; case-insensitive, any other value means "Da"
+#' @return with unit = "ppm" a numeric vector of length length(mz) holding the
+#'   per-row Da tolerance; with unit = "Da" a length-1 numeric, preserving the
+#'   scalar semantics of the original path
+.dmf_tol_da <- function(mz, value, unit) {
+  unit <- if (is.null(unit) || !length(unit)) "Da" else as.character(unit)[1L]
+  val <- as.numeric(value)[1L]
+  if (is.na(val) || !is.finite(val) || val <= 0) {
+    stop("Mass tolerance must be a positive finite number, got: ", value)
+  }
+  if (identical(tolower(unit), "ppm")) {
+    as.numeric(mz) * (val * 1e-6)
+  } else {
+    val
+  }
+}
+
+#' Whether the tolerance takes the per-row (ppm) path
+.dmf_vec_tol <- function(unit) {
+  unit <- if (is.null(unit) || !length(unit)) "Da" else as.character(unit)[1L]
+  identical(tolower(unit), "ppm")
+}
+
+
+
+# ============================================================
+# 1. BigDecimal numeric semantics
 # ============================================================
 
-#' 复刻 BigDecimalHelper.truncate：先加 1e-10，再向零截断到 8 位小数
+#' Reproduce BigDecimalHelper.truncate: add 1e-10, then truncate toward zero to
+#' 8 decimals.
 #'
-#' 关键点：原版的 BigDecimal 是 double 的**精确十进制展开**（new BigDecimal(double)
-#' 的语义），不是"最短往返表示"。例如单元格 81132.26642 的实际 double 是
-#' 81132.266419999898…，加 1e-10 之后仍然没有跨过 81132.26642，
-#' 因此原版截断得到 81132.26641999。若直接用 double 做 +1e-10 的算术，
-#' 加法会把结果舍入到下一个 double（=81132.26642），从而截断出不同的值。
-#' 所以这里取 20 位定点字符串做十进制判断：小数第 9 位之后的部分记为 rest，
-#' rest + 0.01 >= 1 说明加 1e-10 会进位。
+#' The subtlety: the original BigDecimal is the **exact decimal expansion** of the
+#' double (the semantics of new BigDecimal(double)), not the shortest round-trip
+#' form. The actual double for 81132.26642 is 81132.266419999898..., and adding
+#' 1e-10 still does not cross 81132.26642, so the original truncates to
+#' 81132.26641999. Doing the +1e-10 arithmetic in double instead rounds the sum up
+#' to the next double (= 81132.26642) and truncation yields a different value. So
+#' we take a 20-decimal fixed-point string and decide in the decimal domain: the
+#' part from the 9th decimal onward is rest, and rest + 0.01 >= 1 means adding
+#' 1e-10 carries.
 #'
-#' @param x numeric 向量（|x| < 9e15）
-#' @return numeric 向量，值为 8 位小数
+#' @param x numeric vector (|x| < 9e15)
+#' @return numeric vector with 8 decimal places
 dmf_truncate <- function(x) {
   if (length(x) == 0L) return(numeric(0))
   out <- rep(NA_real_, length(x))
   ok <- !is.na(x)
   if (!any(ok)) return(out)
-  if (any(abs(x[ok]) >= 9e15)) stop("数值超出 truncate 的定点处理范围")
+  if (any(abs(x[ok]) >= 9e15)) stop("Value exceeds the fixed-point range of truncate")
 
   ax <- abs(x[ok])
-  # 19 位整数部分（左补零）+ '.' + 20 位小数，总宽 40，位置固定
+  # 19-digit integer part (zero padded) + '.' + 20 decimals: width 40, fixed
   s <- sprintf("%040.20f", ax)
   ip <- as.numeric(substr(s, 1L, 19L))
   f8 <- as.numeric(substr(s, 21L, 28L))
@@ -75,16 +133,18 @@ dmf_truncate <- function(x) {
   out
 }
 
-#' BigDecimal.divide(…, digits, RoundingMode.HALF_UP) 的向量化版本
+#' Vectorised BigDecimal.divide(..., digits, RoundingMode.HALF_UP)
 #'
-#' R 的 round()/sprintf() 都是 banker's rounding（四舍六入五成双），
-#' 例如 13.23828125 保留 7 位会得到 13.2382812，而原版 HALF_UP 要 13.2382813。
-#' 这里取 digits + 9 位十进制展开后手工判断第 digits+1 位是否 >= 5 再进位。
-#' @param a,b numeric 向量（长度可回收）
-#' @param digits 小数位，默认取 config$FloatCount
+#' R's round()/sprintf() both use banker's rounding (round half to even), so
+#' 13.23828125 to 7 decimals gives 13.2382812 while the original HALF_UP wants
+#' 13.2382813. We expand to digits + 9 decimals and test by hand whether digit
+#' digits+1 is >= 5 before carrying.
+#' @param a,b numeric vectors (recycled)
+#' @param digits decimal places, defaults to config$FloatCount
 dmf_divide <- function(a, b, digits = 7L) {
   if (any(b == 0, na.rm = TRUE)) {
-    stop("divideD 的除数为 0：原版在此处抛出 ArithmeticException，请检查打分统计强度")
+    stop("divideD divisor is 0: the original throws ArithmeticException here, ",
+         "check the intensity used by the scoring statistics")
   }
   d <- as.integer(digits)
   q <- a / b
@@ -105,15 +165,18 @@ dmf_divide <- function(a, b, digits = 7L) {
   out
 }
 
-#' CalcTools.Score：从后往前找第一个 v >= range[i]，返回 scores[i]，否则 0
+#' CalcTools.Score: scan backwards for the first v >= range[i], return
+#' scores[i], otherwise 0.
 #'
-#' 注意 range 必须是升序；命中多个区间时取下标最大的那个（原版是倒序扫描）。
-#' @param v numeric 向量
-#' @param range 升序区间下界
-#' @param scores 与 range 等长的分值
+#' range must be ascending; when several intervals match, the largest index wins
+#' (the original scans in reverse).
+#' @param v numeric vector
+#' @param range ascending interval lower bounds
+#' @param scores score values, same length as range
 dmf_score <- function(v, range, scores) {
   if (length(range) != length(scores)) {
-    stop("打分区间与分值数量不一致（原版配置校验同样会拒绝）")
+    stop("Score ranges and score values differ in length ",
+         "(the original config validation rejects this too)")
   }
   idx <- findInterval(v, range)
   out <- numeric(length(v))
@@ -122,32 +185,37 @@ dmf_score <- function(v, range, scores) {
   out
 }
 
-#' BigDecimal.toString() 在整数场景下的等价物（用于拼接 no / rt 字符串）
-#' @param x numeric 向量，要求全部为整数
+#' Equivalent of BigDecimal.toString() for the integer case (used to build the
+#' no / rt strings)
+#' @param x numeric vector, all values must be integers
 dmf_integer_string <- function(x) {
-  if (any(is.na(x))) stop("样品编号 / 保留时间为空，无法构造原版要求的拼接键")
+  if (any(is.na(x))) stop("Sample number / retention time is missing, ",
+                          "cannot build the concatenated key the original requires")
   if (any(x != round(x))) {
-    stop("原版用字符串拼接构造 RT&No&m/z 键（rt.toString()+no+mz），" ,
-         "要求 RT 与样品编号都是整数；当前数据存在非整数取值，原版在此处会抛 ",
-         "NumberFormatException。请先把 RT 取整后再运行。")
+    stop("The original builds the RT&No&m/z key by string concatenation ",
+         "(rt.toString() + no + mz), which requires both RT and sample number ",
+         "to be integers. The current data has non-integer values, so the ",
+         "original would throw NumberFormatException here. Round RT first.")
   }
-  if (any(abs(x) >= 1e15)) stop("样品编号 / 保留时间超出整数可表示范围")
+  if (any(abs(x) >= 1e15)) stop("Sample number / retention time exceeds the ",
+                                "range of representable integers")
   sprintf("%.0f", x)
 }
 
-#' 把固定 8 位小数的十进制字符串拆成「整数部分 + 小数部分 × 1e8」
+#' Split a fixed 8-decimal string into integer part + fraction * 1e8
 #'
-#' 拼出来的 rt&no&m/z 键量级可达 1e8，转成 double 后第 8 位小数已经不可靠
-#' （ulp 约 3e-8）。原版用 BigDecimal 做精确十进制比较，所以这里把键拆成
-#' 两个精确整数，窗口边界判定就在整数域里完成。
+#' The assembled rt&no&mz key reaches 1e8, where the 8th decimal is no longer
+#' reliable in double (ulp about 3e-8). The original compares exactly with
+#' BigDecimal, so the key is split into two exact integers and the window
+#' boundary test happens in the integer domain.
 #'
-#' @param s 由数字、可选负号与小数点组成的字符串向量
-#' @param scale 小数位数，默认 8（与 dmf_truncate 的 scale 一致）
-#' @return list(ip = 整数部分, f8 = 小数部分放大 scale 倍后的整数)
+#' @param s character vector of digits with an optional minus sign and dot
+#' @param scale number of decimals, default 8 (same scale as dmf_truncate)
+#' @return list(ip = integer part, f8 = fraction scaled by 10^scale as an integer)
 dmf_decimal_parts <- function(s, scale = 8L) {
   if (length(s) == 0L) return(list(ip = numeric(0), f8 = numeric(0)))
   scale <- as.integer(scale)
-  if (any(is.na(s))) stop("十进制字符串为空，无法拆分")
+  if (any(is.na(s))) stop("Decimal string is empty, cannot be split")
 
   neg <- startsWith(s, "-")
   body <- ifelse(neg, substring(s, 2L), s)
@@ -155,46 +223,63 @@ dmf_decimal_parts <- function(s, scale = 8L) {
   fr_s <- ifelse(grepl("\\.", body, fixed = FALSE),
                  sub("^[^.]*\\.", "", body), "")
   if (any(nchar(fr_s) > scale)) {
-    stop("十进制字符串的小数位超过 ", scale, " 位，无法用整数精确表示")
+    stop("Decimal string has more than ", scale,
+         " decimals, cannot be represented exactly as an integer")
   }
   fr_s <- gsub(" ", "0", sprintf(paste0("%-", scale, "s"), fr_s),
                fixed = TRUE)
   ip <- suppressWarnings(as.numeric(ip_s))
   f8 <- suppressWarnings(as.numeric(fr_s))
-  if (any(is.na(ip)) || any(is.na(f8))) stop("十进制字符串解析失败")
+  if (any(is.na(ip)) || any(is.na(f8))) stop("Failed to parse decimal string")
   sign <- ifelse(neg, -1, 1)
   list(ip = ip * sign, f8 = f8 * sign)
 }
 
 
 # ============================================================
-# 2. 区间检索（复刻 Helper.binarySearch + IonsManager2.findIons）
+# 2. Window search (reproducing Helper.binarySearch + IonsManager2.findIons)
 # ============================================================
 
-#' 计算每个 target 在升序键数组中的开区间下标
+#' Open-interval index bounds of each target inside an ascending key array
 #'
-#' 原版窗口：targetMin = target - error + 1e-9，targetMax = target + error - 1e-9，
-#' 命中条件为 key > targetMin 且 key < targetMax。
+#' The original window is targetMin = target - error + 1e-9 and
+#' targetMax = target + error - 1e-9, and a key is a hit when key > targetMin
+#' and key < targetMax.
 #'
-#' 注意：`rt&no&m/z` 这类拼接键的量级可达 1e8，此时 double 的 ulp（3e-8）
-#' 已经大于原版的 fixOffset（1e-9），直接按 error 求出的边界会把
-#' 「恰好相差 error」的邻元误纳进来。`exact = TRUE` 时改用
-#' 「粗筛 + 十进制整数（单位 1e-8）精确判边界」，与 BigDecimal 比较一致。
+#' Note: concatenated keys such as `rt&no&m/z` reach 1e8, where the double ulp
+#' (3e-8) is already larger than the original fixOffset (1e-9), so a boundary
+#' computed straight from error wrongly admits a neighbour that differs by
+#' exactly error. With `exact = TRUE` we switch to "coarse prefilter plus exact
+#' boundary test in decimal integers (unit 1e-8)", which matches the BigDecimal
+#' comparison.
 #'
-#' @param sorted_key 升序数值向量
-#' @param target 查询值向量
-#' @param error 容差（ErrorRange 或 ErrorRangeInGroups）
-#' @param exact 是否走十进制精确判边界（键的量级超过 1e7 时必须开）
-#' @param offset 查询值在比较时额外叠加的常量（如同位素的 1.00335）。
-#'   精确模式下不把 offset 加进 target，而是比较 key - target 与 offset，
-#'   避免 target + offset 这一步又引入一次 double 舍入。
-#' @param key_parts target_parts dmf_decimal_parts() 结果（整数部分 + 8 位小数）。
-#'   给了就走整数域精确比较，键量级超过 1e7 时必需。
-#' @return list(lo, hi)，闭区间下标；lo > hi 表示无命中
+#' @param sorted_key ascending numeric vector
+#' @param target vector of query values
+#' @param error tolerance (ErrorRange or ErrorRangeInGroups)
+#' @param exact use the exact decimal boundary test (mandatory once the key
+#'   magnitude exceeds 1e7)
+#' @param offset constant added to the query value during comparison (for
+#'   example the 1.00335 isotope shift). In exact mode offset is not added to
+#'   target; instead key - target is compared with offset, so the target + offset
+#'   step cannot introduce another double rounding.
+#' @param key_parts,target_parts results of dmf_decimal_parts() (integer part
+#'   plus 8 decimals). When supplied the comparison runs in the integer domain,
+#'   which is required once the key magnitude exceeds 1e7.
+#' @param vec_tol TRUE means error is a **per-row tolerance as long as target**
+#'   (ppm mode), handled by .dmf_window_bounds_vec(). FALSE (the default) keeps
+#'   the original scalar semantics, i.e. the path that reproduces the original,
+#'   with nothing changed.
+#' @return list(lo, hi), closed-interval indices; lo > hi means no hit
 dmf_window_bounds <- function(sorted_key, target, error, exact = FALSE, offset = 0,
-                              key_parts = NULL, target_parts = NULL) {
+                              key_parts = NULL, target_parts = NULL,
+                              vec_tol = FALSE) {
+  if (isTRUE(vec_tol)) {
+    return(.dmf_window_bounds_vec(sorted_key, target, error, offset,
+                                  key_parts = key_parts,
+                                  target_parts = target_parts))
+  }
   guard <- error - .dmf_fix_offset
-  if (guard <= 0) stop("匹配容差必须大于 1e-9（原版的 fixOffset）")
+  if (guard <= 0) stop("Mass tolerance must be greater than 1e-9 (the original fixOffset)")
   if (!isTRUE(exact)) {
     return(list(
       lo = findInterval(target + offset - guard, sorted_key) + 1L,
@@ -202,7 +287,7 @@ dmf_window_bounds <- function(sorted_key, target, error, exact = FALSE, offset =
     ))
   }
 
-  # ---- 粗筛：放宽 1e-6（远超 1e-8 量级键的 ulp），保证不漏 ----
+  # ---- Coarse prefilter: widened by 1e-6, far above the ulp of a 1e-8 key, so nothing is missed ----
   n <- length(sorted_key)
   q <- length(target)
   lo <- rep(1L, q)
@@ -223,21 +308,23 @@ dmf_window_bounds <- function(sorted_key, target, error, exact = FALSE, offset =
   qidx <- rep.int(id, len)
   pos <- sequence(len, from = c_lo[id])
 
-  # 键与 target 都是 8 位小数，乘 1e8 后是整数；
-  # key - target 相减是精确的（Sterbenz），误差只来自各自 double 表示，
-  # 键量级 < 3.4e7 时误差不足 0.5，round 后即原版 BigDecimal 的差值。
+  # Both key and target carry 8 decimals, so multiplying by 1e8 gives integers;
+  # key - target is exact (Sterbenz), the only error comes from each double
+  # representation, and for key magnitudes < 3.4e7 it stays below 0.5, so
+  # rounding reproduces the original BigDecimal difference.
   e8 <- round(error * .dmf_truncate_scale)
   if (abs(error * .dmf_truncate_scale - e8) > 1e-6) {
-    stop("匹配容差必须是 1e-8 的整数倍（原版按十进制精确比较）")
+    stop("Mass tolerance must be a multiple of 1e-8 (the original compares exactly in decimal)")
   }
   off8 <- round(offset * .dmf_truncate_scale)
   if (!is.null(key_parts) && !is.null(target_parts)) {
-    # 整数域：integer 部分差 × 1e8 + 小数部分差，全部是精确整数
+    # Integer domain: integer-part difference * 1e8 + fraction difference, all exact integers
     delta <- (key_parts$ip[pos] - target_parts$ip[qidx]) * .dmf_truncate_scale +
       (key_parts$f8[pos] - target_parts$f8[qidx]) - off8
   } else {
-    # key - target 相减是精确的（Sterbenz），误差只来自各自 double 表示，
-    # 键量级 < 3.4e7 时误差不足 0.5，round 后即原版 BigDecimal 的差值。
+    # key - target is exact (Sterbenz); the only error comes from each double
+    # representation, and for key magnitudes < 3.4e7 it stays below 0.5, so
+    # rounding reproduces the original BigDecimal difference.
     delta <- round((sorted_key[pos] - target[qidx]) * .dmf_truncate_scale) - off8
   }
   keep <- delta >= (1 - e8) & delta <= (e8 - 1)
@@ -252,32 +339,115 @@ dmf_window_bounds <- function(sorted_key, target, error, exact = FALSE, offset =
   list(lo = lo, hi = hi)
 }
 
-#' 在窗口内取"下标最小"（即原版 findIon 返回的第一个）元素
+#' Per-row tolerance window test (ppm mode only)
 #'
-#' 原版把命中集合塞进 TreeMap<原始下标, Ion>，get(0) 即原始下标最小者。
-#' 这里用稀疏表做 O(1) 区间最小值查询：把 (rank, 位置) 编码成一个数值，
-#' 取最小即先比 rank、再比位置。rank 必须唯一，因此结果与逐元素比较一致。
-#' @param sorted_key 升序键
-#' @param target 查询值
-#' @param error 容差
-#' @param rank 与 sorted_key 等长的原始下标（互不相同）
-#' @param exact 窗口边界是否走十进制精确判定
-#' @param offset 比较时叠加的常量（见 dmf_window_bounds）
-#' @param key_parts target_parts 键的精确十进制分解（见 dmf_window_bounds）
-#' @return 整数向量，命中位置在 sorted_key 中的下标；无命中为 NA
+#' Exactly one thing differs from dmf_window_bounds(exact = TRUE): the tolerance
+#' becomes a vector as long as target instead of a scalar, and the test
+#'     |key - (target + offset)| < tol_i - 1e-9
+#' runs pairwise against each target's own tol_i. Because tol varies with m/z a
+#' single findInterval cannot finish the scan, so the prefilter is widened to
+#' max(tol) and the expanded candidate pairs are then filtered exactly in the
+#' integer domain -- nothing missed, nothing extra admitted.
+#'
+#' Accuracy: delta is in units of 1e-8 and comes from "integer-part difference
+#' plus fraction difference" (exact integers when key_parts is supplied), while
+#' tol is left unconverted. A ppm tolerance is not a multiple of 1e-8 to begin
+#' with, so forcing it to one would only introduce a fixed bias.
+#'
+#' @inheritParams dmf_window_bounds
+#' @return list(lo, hi), same as dmf_window_bounds
+.dmf_window_bounds_vec <- function(sorted_key, target, error, offset = 0,
+                                   key_parts = NULL, target_parts = NULL) {
+  n <- length(sorted_key)
+  q <- length(target)
+  lo <- rep(1L, q)
+  hi <- rep(0L, q)
+  if (n == 0L || q == 0L) return(list(lo = lo, hi = hi))
+
+  error <- as.numeric(error)
+  if (length(error) != q) {
+    stop("Per-row tolerance length (", length(error),
+         ") must match the target length (", q, ")")
+  }
+  guard <- error - .dmf_fix_offset
+  if (anyNA(guard) || any(!is.finite(guard))) {
+    stop("Mass tolerance contains NA / non-finite values, cannot evaluate the window")
+  }
+  if (any(guard <= 0)) {
+    stop("Mass tolerance must be greater than 1e-9 (the original fixOffset); ",
+         "the smallest value is ", format(min(error), digits = 6),
+         ", which is too small for the m/z in this snapshot")
+  }
+
+  # ---- Coarse prefilter: widened to the global widest tolerance + 1e-6 so nothing is missed; extra candidates are dropped exactly below ----
+  tgt <- target + offset
+  pad <- 1e-6
+  emax <- max(guard)
+  c_lo <- findInterval(tgt - (emax + pad), sorted_key) + 1L - 4L
+  c_hi <- findInterval(tgt + (emax + pad), sorted_key, left.open = TRUE) + 4L
+  c_lo <- pmin(pmax(c_lo, 1L), n + 1L)
+  c_hi <- pmin(pmax(c_hi, 0L), n)
+
+  id <- which(c_lo <= c_hi)
+  if (!length(id)) return(list(lo = lo, hi = hi))
+
+  len <- c_hi[id] - c_lo[id] + 1L
+  qidx <- rep.int(id, len)
+  pos <- sequence(len, from = c_lo[id])
+
+  off8 <- round(offset * .dmf_truncate_scale)
+  if (!is.null(key_parts) && !is.null(target_parts)) {
+    delta <- (key_parts$ip[pos] - target_parts$ip[qidx]) * .dmf_truncate_scale +
+      (key_parts$f8[pos] - target_parts$f8[qidx]) - off8
+  } else {
+    delta <- round((sorted_key[pos] - target[qidx]) * .dmf_truncate_scale) - off8
+  }
+
+  # delta is in units of 1e-8; the open interval as the integer form of |delta| < tol*1e8 - 1e-1
+  e8 <- guard[qidx] * .dmf_truncate_scale
+  keep <- delta >= (1 - e8) & delta <= (e8 - 1)
+  qidx <- qidx[keep]
+  pos <- pos[keep]
+  if (!length(qidx)) return(list(lo = lo, hi = hi))
+
+  first <- !duplicated(qidx)
+  last <- !duplicated(qidx, fromLast = TRUE)
+  lo[qidx[first]] <- pos[first]
+  hi[qidx[last]] <- pos[last]
+  list(lo = lo, hi = hi)
+}
+
+#' Take the "smallest index" element in the window (what findIon returns first)
+#'
+#' The original packs the hit set into a TreeMap<original index, Ion>, so get(0)
+#' is the smallest original index. A sparse table answers range-minimum queries
+#' in O(1) here: (rank, position) is encoded into one number, and taking the
+#' minimum compares rank first and position second. rank must be unique, which
+#' makes the result identical to an element-wise scan.
+#' @param sorted_key ascending key
+#' @param target query values
+#' @param error tolerance
+#' @param rank original indices, same length as sorted_key (all distinct)
+#' @param exact whether the window boundary uses the exact decimal test
+#' @param offset constant added during comparison (see dmf_window_bounds)
+#' @param key_parts,target_parts exact decimal decomposition of the key
+#'   (see dmf_window_bounds)
+#' @param vec_tol whether error is a per-row tolerance (see dmf_window_bounds)
+#' @return integer vector of hit positions in sorted_key; NA when nothing matched
 dmf_argmin_in_window <- function(sorted_key, target, error, rank, exact = FALSE,
                                  offset = 0, key_parts = NULL,
-                                 target_parts = NULL) {
+                                 target_parts = NULL, vec_tol = FALSE) {
   n <- length(sorted_key)
   out <- rep(NA_integer_, length(target))
   if (n == 0L || length(target) == 0L) return(out)
 
   b <- dmf_window_bounds(sorted_key, target, error, exact = exact, offset = offset,
-                         key_parts = key_parts, target_parts = target_parts)
+                         key_parts = key_parts, target_parts = target_parts,
+                         vec_tol = vec_tol)
   ok <- b$lo <= b$hi
   if (!any(ok)) return(out)
 
-  # 编码：enc = rank * K + 位置，K > n 保证解码无歧义；最大约 n*2^20 < 2^53
+  # Encoding: enc = rank * K + position; K > n makes decoding unambiguous; the maximum is about n*2^20 < 2^53
   K <- 2^ceiling(log2(n + 1))
   enc <- rank * K + seq_len(n)
 
@@ -286,7 +456,7 @@ dmf_argmin_in_window <- function(sorted_key, target, error, rank, exact = FALSE,
   len <- hi - lo + 1L
   max_len <- max(len)
 
-  # 稀疏表：第 j 层覆盖 2^(j-1) 个元素
+  # Sparse table: level j covers 2^(j-1) elements
   levels <- list(enc)
   step <- 1L
   while (step * 2 <= max_len) {
@@ -307,7 +477,7 @@ dmf_argmin_in_window <- function(sorted_key, target, error, rank, exact = FALSE,
   out
 }
 
-#' 按分组求和，结果按组号对齐成长度 n 的向量（空组为 0）
+#' Sum by group, aligned to a length-n vector by group number (empty groups are 0)
 .dmf_group_sum <- function(x, group, n) {
   rs <- rowsum(x, group, reorder = TRUE)
   out <- numeric(n)
@@ -315,12 +485,14 @@ dmf_argmin_in_window <- function(sorted_key, target, error, rank, exact = FALSE,
   out
 }
 
-#' Helper.binarySearch 的递归版本（无容差、精确键匹配，mergeDiff 用）
+#' Recursive form of Helper.binarySearch (no tolerance, exact key match; mergeDiff)
 #'
-#' 0-based 下标逐行复刻：遇到等于 mid 的键立即返回，因此同键多元素时返回的
-#' 不一定是第一个，后续调用方还需要向前展开同键区间。这一点原版行为如此，
-#' 此处保持，不做"更正确"的修正。
-#' @return 1-based 下标
+#' Reproduced line by line with 0-based indices: a key equal to mid returns
+#' immediately, so when several elements share a key the one returned is not
+#' necessarily the first, and the caller must still expand the equal-key range
+#' backwards. That is what the original does; it is kept as is rather than
+#' "corrected".
+#' @return 1-based index
 dmf_bsearch_java <- function(sorted_key, target) {
   n <- length(sorted_key)
   lo0 <- 0L
@@ -338,50 +510,56 @@ dmf_bsearch_java <- function(sorted_key, target) {
 
 
 # ============================================================
-# 3. 数据读取（AnalysisIonListener + IoHelper.ReadSamples）
+# 3. Data reading (AnalysisIonListener + IoHelper.ReadSamples)
 # ============================================================
 
-#' 读取一个分组的原始数据 Excel
+#' Read the raw-data Excel of one group
 #'
-#' 格式：每个样品 6 列（Sample(No), RT, RT&m/z, m/z, Intensity, 空列）。
-#' 原版用 EasyExcel 按"首行出现的单元格"切块，并把第一行当表头丢弃；
-#' 这里按 6 列步长切块，块的存在性同样由首行判定。
+#' Layout: six columns per sample (Sample(No), RT, RT&m/z, m/z, Intensity and one
+#' empty column). The original slices blocks with EasyExcel on the cells that
+#' appear in the first row and drops that row as a header; here the slicing uses
+#' a fixed stride, with block existence likewise decided by the first row.
 #'
-#' 样品名取自首行各块的 Sample(No)（与原版一致，不读表头文字），
-#' 去重保序；离子列表按"样品优先"排列（先样品 1 的全部离子，再样品 2…），
-#' 这一顺序会影响原版的稳定排序与 findIon 的 tie-break，必须保持。
+#' Sample names come from Sample(No) of each block in the first row (as in the
+#' original, the header text is not read), deduplicated with order preserved. The
+#' ion list is ordered sample first (all ions of sample 1, then sample 2, ...);
+#' that order affects the original's stable sort and findIon's tie-breaking, so
+#' it must be preserved.
 #'
-#' @param path Excel 路径
-#' @param block_width 每样品列数；NA（默认）自动识别：表头出现 RT_apex
-#'   即按 7 列切块（新格式），否则按 6 列（旧格式）
-#' @return list(sample_names, ions)，ions 为 data.frame：
-#'   no(字符串), no_int, rt, rt_mz, no_mz, mz, rt_no_mz, intensity, col,
-#'   rt_apex（亚分钟 apex RT，仅新格式有；旧格式为 NA）
+#' @param path path to the Excel file
+#' @param block_width columns per sample; NA (default) detects it: a header
+#'   containing RT_apex means seven columns per block (new layout), otherwise six
+#'   (old layout)
+#' @return list(sample_names, ions) where ions is a data.frame with
+#'   no (character), no_int, rt, rt_mz, no_mz, mz, rt_no_mz, intensity, col and
+#'   rt_apex (sub-minute apex RT, new layout only; NA in the old layout)
 dmf_read_samples <- function(path, block_width = NA) {
-  if (!file.exists(path)) stop("找不到数据文件：", path)
+  if (!file.exists(path)) stop("Data file not found: ", path)
 
   raw <- readxl::read_excel(path, col_names = FALSE, .name_repair = "minimal")
   raw <- as.data.frame(raw, stringsAsFactors = FALSE)
-  if (nrow(raw) < 2L) stop("数据文件除表头外没有数据行：", path)
+  if (nrow(raw) < 2L) stop("Data file has no rows besides the header: ", path)
 
-  # readxl 读到的第一行就是 xlsx 的表头文字（数据行从第二行起，见下）。
-  # RT_apex 是 Ms1Geter 新增的亚分钟 RT 列，有它就多一列，块宽 6 -> 7。
+  # The first row readxl returns is the xlsx header text (data starts on the
+  # second row, see below). RT_apex is the sub-minute RT column added by
+  # Ms1Geter; when present there is one extra column, so the block width is 7
+  # instead of 6.
   hdr <- trimws(as.character(raw[1L, ]))
   has_rt <- any(hdr == "RT_apex")
   if (is.na(block_width)) block_width <- if (has_rt) 7L else 6L
 
-  # EasyExcel 默认 headRowNumber = 1：第一行被当作表头丢弃
+  # EasyExcel defaults to headRowNumber = 1: the first row is dropped as a header
   data <- raw[-1L, , drop = FALSE]
   n_col <- ncol(data)
 
   starts <- seq.int(1L, n_col, by = block_width)
   starts <- starts[starts + 4L <= n_col]
-  if (length(starts) == 0L) stop("数据文件列数不足，无法按每样品 6 列切块")
+  if (length(starts) == 0L) stop("Data file has too few columns to slice into 6-column blocks per sample")
 
   first_no <- vapply(starts, function(s) suppressWarnings(as.numeric(data[[s]][1])), numeric(1))
   starts <- starts[!is.na(first_no)]
   first_no <- first_no[!is.na(first_no)]
-  if (length(starts) == 0L) stop("首行没有任何样品编号，文件格式不符合要求")
+  if (length(starts) == 0L) stop("No sample numbers in the first row, the file layout is not supported")
 
   blocks <- lapply(seq_along(starts), function(j) {
     s <- starts[j]
@@ -401,38 +579,43 @@ dmf_read_samples <- function(path, block_width = NA) {
     out
   })
   blocks <- blocks[!vapply(blocks, is.null, logical(1))]
-  if (length(blocks) == 0L) stop("没有读到任何离子数据：", path)
+  if (length(blocks) == 0L) stop("No ion data could be read: ", path)
   ions <- do.call(rbind, blocks)
   rownames(ions) <- NULL
 
-  # 样品名：首行各块的 Sample(No)，去重保序（原版 HashSet + ArrayList 的顺序）
+  # Sample names: Sample(No) of each block in the first row, deduplicated with order
+  # preserved (the original's HashSet + ArrayList order)
   block_names <- dmf_integer_string(first_no)
   sample_names <- unique(block_names)
   col_of_block <- match(block_names, sample_names)
 
-  # 键构造：与原版 parseIon 一致
+  # Key construction: identical to parseIon in the original
   no_str <- dmf_integer_string(ions$no_num)
   rt_str <- dmf_integer_string(ions$rt)
   mz <- dmf_truncate(ions$mz_raw)
   rt_mz <- dmf_truncate(ions$rt_mz_raw)
   mz_str <- sprintf("%.8f", mz)                       # BigDecimal(scale 8).toString()
-  # truncate(no + mz)：拼接串已是 8 位小数，加 1e-10 再截 8 位是恒等变换，
-  # 所以这里不再对 double 做一次 truncate —— 那会把 double 表示误差
-  # （如 4491174.33184999979）带进来，截成 4491174.33184999。
+  # truncate(no + mz): the concatenated string already has 8 decimals, so adding
+  # 1e-10 and truncating to 8 decimals is the identity here. Running truncate on
+  # the double again would drag in the double representation error (for example
+  # 4491174.33184999979) and cut it to 4491174.33184999.
   no_concat <- paste0(no_str, mz_str)
   no_mz <- as.numeric(no_concat)
   concat <- paste0(rt_str, no_str, mz_str)
   rt_no_mz <- as.numeric(concat)                      # new BigDecimal(rt+no+mz)
 
   if (any(is.na(no_mz)) || any(is.na(rt_no_mz))) {
-    stop("拼接键构造失败：样品编号 / RT / m/z 的字符串拼接无法解析为数值，",
-         "与手机版原版一样受 Sample(No) 位数与 RT 整数性约束")
+    stop("Failed to build the concatenated key: the sample number / RT / m/z ",
+         "string concatenation does not parse as a number. As in the original, ",
+         "the digit count of Sample(No) and the integer-only RT are binding ",
+         "constraints")
   }
 
-  # no&m/z（约 1e7）与 rt&no&m/z（最高约 1.9e8）这两类拼接键的量级都已接近
-  # 或超过 double 的分辨极限，ulp 吃掉原版 fixOffset(1e-9) 后无法再分辨
-  # 第 8 位小数。原版是 BigDecimal 十进制比较，因此额外保存
-  # 「整数部分 + 8 位小数」两个精确整数，供窗口判定使用。
+  # Both key families -- no&m/z (about 1e7) and rt&no&m/z (up to about 1.9e8) --
+  # are at or beyond the resolution limit of double: once the ulp swallows the
+  # original fixOffset (1e-9) the 8th decimal can no longer be resolved. The
+  # original compares with BigDecimal in decimal, so the integer part and the
+  # 8-decimal fraction are stored as two exact integers for the window test.
   no_parts <- dmf_decimal_parts(no_concat)
   parts <- dmf_decimal_parts(concat)
 
@@ -460,36 +643,50 @@ dmf_read_samples <- function(path, block_width = NA) {
 
 
 # ============================================================
-# 4. 强度矩阵（IonsManager2.buildIntensityMatrix + MatrixRow）
+# 4. Intensity matrix (IonsManager2.buildIntensityMatrix + MatrixRow)
 # ============================================================
 
-#' 为每个离子里生成跨样品的强度矩阵行，并统计 count / averageIntensity
+#' Build cross-sample intensity-matrix rows for every ion and derive
+#' count / averageIntensity
 #'
-#' 原版：对每个离子，以其 rtMz 为中心取 ±ErrorRange 内的全部离子，
-#' 按样品编号放入 MatrixRow（同一样品先到先得），
-#' count = 出现的样品数，averageIntensity = 强度和 / count（7 位 HALF_UP）。
+#' The original takes, for each ion, every ion within +/- ErrorRange of its rtMz
+#' and puts them into a MatrixRow keyed on sample number (first come, first
+#' served within a sample); count is the number of samples present and
+#' averageIntensity is the summed intensity / count (7 digits, HALF_UP).
 #'
-#' `pick` 控制"同一样品在窗口内命中多个离子时取哪一个"：
-#'   - "first"（默认，与原版 Java 一致）：按离子原始下标升序取第一个；
-#'   - "max"：取窗口内强度最大的那个。
-#' 两者对"一条离子在窗口内只有一支"的数据完全等价；只有当同一特征在窗口内
-#' 裂成多支 m/z 时才有差别。选支不稳会让该样品强度在强弱支之间跳变，
-#' 进而把组均值与倍数变化带偏，故 "max" 是更稳的口径。
+#' `pick` selects which ion is taken when one sample has several hits in the
+#' window:
+#'   - "first" (default, matching the original Java): first by ascending
+#'     original index;
+#'   - "max": the most intense one in the window.
+#' The two are equivalent when a given ion occupies only one branch of the
+#' window. They differ only when one feature splits into several m/z branches,
+#' where an unstable choice makes that sample's intensity jump between a strong
+#' and a weak branch and biases both the group mean and the fold change, so
+#' "max" is the steadier convention.
 #'
-#' @param ions dmf_read_samples() 得到的离子表
-#' @param n_samples 样品数
-#' @param error_range 组内匹配容差（Da）
-#' @param digits 均值小数位
-#' @param pick "first" 或 "max"，见上
-#' @param rt_tol 额外的时间维度容差（分钟）。0（默认）= 只用 rt_mz 键，
-#'   即原版的「同一整数分钟桶 + ±ErrorRange」；>0 时改用
-#'   「±ErrorRange 且 |apex RT 差| ≤ rt_tol」，行身份因此需要 Ms1Geter
-#'   输出的 RT_apex 列，缺失该列时退回 0 的行为。
-#' @return ions 追加 count / avg / mat（n_ions × n_samples，缺测为 NA）
+#' @param ions ion table returned by dmf_read_samples()
+#' @param n_samples number of samples
+#' @param error_range within-group matching tolerance, unit given by unit
+#' @param digits decimals of the mean
+#' @param pick "first" or "max", see above
+#' @param rt_tol extra tolerance on the time axis (minutes). 0 (default) uses
+#'   only the rt_mz key, i.e. the original "same integer minute bin +/-
+#'   ErrorRange"; >0 switches to "+/- ErrorRange and |apex RT difference| <=
+#'   rt_tol", which requires the RT_apex column written by Ms1Geter and falls
+#'   back to the 0 behaviour when that column is missing.
+#' @param unit unit of error_range: "ppm" (converted per row from m/z) or "Da"
+#' @return ions with count / avg / mat appended (n_ions x n_samples, NA where not
+#'   measured)
 dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L,
-                              pick = c("first", "max"), rt_tol = 0) {
+                              pick = c("first", "max"), rt_tol = 0,
+                              unit = "Da") {
   pick <- match.arg(pick)
   n <- nrow(ions)
+  ppm <- .dmf_vec_tol(unit)
+  # Per-row tolerance in Da (ppm mode) or a scalar (Da mode); each branch below
+  # subsets it in its own way
+  tol_all <- .dmf_tol_da(ions$mz, error_range, unit)
 
   use_rt <- length(rt_tol) == 1L && is.numeric(rt_tol) && is.finite(rt_tol) &&
     rt_tol > 0 && !is.null(ions$rt_apex) && any(is.finite(ions$rt_apex))
@@ -497,38 +694,43 @@ dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L,
   if (!use_rt) {
     o <- order(ions$rt_mz)
     ks <- ions$rt_mz[o]
+    tol_k <- if (ppm) tol_all[o] else tol_all
 
-    b <- dmf_window_bounds(ks, ks, error_range)
+    b <- dmf_window_bounds(ks, ks, tol_k, vec_tol = ppm)
     w <- b$hi - b$lo + 1L
-    if (any(w < 1L)) stop("存在空的匹配窗口，数据或误差范围异常")
+    if (any(w < 1L)) stop("Empty matching window: the data or the error range is abnormal")
 
     ion_ion <- o[rep.int(seq_len(n), w)]
     mem_ion <- o[sequence(w, from = b$lo)]
   } else {
-    # ---- 两维窗口：m/z（±ErrorRange）∩ apex RT（±rt_tol）----
-    # 键 = floor(RT/rt_tol) * 1e8 + round(m/z*1e4)，按此键排序后，
-    # 同类 membership 在同一 RT 分箱内仍是一段连续区间（箱内按 m/z 排），
-    # 故可沿用 findInterval；相邻分箱各查一次，再用真实 RT 差过滤。
-    # 分箱宽度 = rt_tol，差 ≤ rt_tol 的两行箱号至多差 1，故三次查询完备。
+    # ---- Two-dimensional window: m/z (+/- ErrorRange) AND apex RT (+/- rt_tol) ----
+    # key = floor(RT / rt_tol) * 1e8 + round(m/z * 1e4). After sorting by this
+    # key, all members of one kind still form a contiguous run inside a given RT
+    # bin (a bin is ordered by m/z), so findInterval still applies; query the
+    # neighbouring bins as well and then filter on the true RT difference. The
+    # bin width is rt_tol, so two rows within rt_tol of each other differ in bin
+    # number by at most 1, which makes three queries exhaustive.
     rt <- ions$rt_apex
     bad <- !is.finite(rt)
-    if (any(bad)) rt[bad] <- ions$rt[bad]      # 缺 apex RT 的行退回整分钟桶
-    mz4 <- round(ions$mz * 1e4)                # m/z 的整数表示（1e-4 Da）
+    if (any(bad)) rt[bad] <- ions$rt[bad]      # rows without an apex RT fall back to the whole-minute bin
+    mz4 <- round(ions$mz * 1e4)                # integer representation of m/z (1e-4 Da)
     off <- 1e8
     bnx <- floor(rt / rt_tol)
     k2  <- bnx * off + mz4
 
     o  <- order(k2)
     ks <- k2[o]
-    err <- error_range * 1e4                   # 键单位换算成 1e-4 Da
+    # The key unit is 1e-4 Da, so the tolerance is converted the same way
+    # (in ppm mode this is the per-row mz * ppm * 1e-2)
+    err <- if (ppm) tol_all * 1e4 else error_range * 1e4
 
     grab <- function(target, check_rt) {
-      bb <- dmf_window_bounds(ks, target, err)
+      bb <- dmf_window_bounds(ks, target, err, vec_tol = ppm)
       ww <- bb$hi - bb$lo + 1L
-      # 相邻分箱查不到东西是正常的（那一箱可能没有相近 m/z 的离子）；
-      # 自己那一箱必须至少命中自己。
+      # Finding nothing in a neighbouring bin is normal (that bin may hold no ion
+      # with a similar m/z); the ion's own bin must at least hit itself.
       if (!check_rt && any(ww < 1L)) {
-        stop("存在空的匹配窗口，数据或误差范围异常")
+        stop("Empty matching window: the data or the error range is abnormal")
       }
       ii <- rep.int(seq_len(n), ww)
       mm <- o[sequence(ww, from = bb$lo)]
@@ -539,16 +741,17 @@ dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L,
       }
       list(ii = ii, mm = mm)
     }
-    e0 <- grab(k2, FALSE)                       # 同箱：RT 差必 < rt_tol，无需再滤
-    e1 <- grab((bnx + 1L) * off + mz4, TRUE)    # 后一箱
-    e2 <- grab((bnx - 1L) * off + mz4, TRUE)    # 前一箱
+    e0 <- grab(k2, FALSE)                       # same bin: RT difference is necessarily < rt_tol, no filtering needed
+    e1 <- grab((bnx + 1L) * off + mz4, TRUE)    # next bin
+    e2 <- grab((bnx - 1L) * off + mz4, TRUE)    # previous bin
     ion_ion <- c(e0$ii, e1$ii, e2$ii)
     mem_ion <- c(e0$mm, e1$mm, e2$mm)
     rm(e0, e1, e2)
   }
   col_mem <- ions$col[mem_ion]
 
-  # 排序键决定「先到先得」的语义：first = 原始下标升序；max = 强度降序
+  # The sort key defines "first come, first served": first = ascending original
+  # index; max = descending intensity
   ord <- if (identical(pick, "max")) {
     order(ion_ion, -ions$intensity[mem_ion], mem_ion)
   } else {
@@ -577,49 +780,61 @@ dmf_create_matrix <- function(ions, n_samples, error_range, digits = 7L,
 
 
 # ============================================================
-# 5. 阈值筛选与唯一化（IonCalculator.filterIons + distinctIons）
+# 5. Threshold filtering and deduplication (IonCalculator.filterIons + distinctIons)
 # ============================================================
 
-#' IonsManager2.sortByCount：按 count 降序，稳定排序
+#' IonsManager2.sortByCount: descending by count, stable sort
 dmf_sort_by_count <- function(count) {
   order(count, seq_along(count), decreasing = c(TRUE, FALSE))
 }
 
-#' 单轮唯一化
+#' One deduplication round
 #'
-#' 原版 distinctIons(ions, iStd, errorRange)：
-#'   遍历 ions（按 count 降序），对每个离子在自己的键窗口里找"命中集合中
-#'   排在最前的那个"（即 idxMap 值最小者），若该代表还没被占用，就保留
-#'   当前离子，并把代表标记为已占用。
-#' 注意保留的是"当前离子"而不是代表本身，这是原版的行为。
+#' The original distinctIons(ions, iStd, errorRange): walk ions (descending by
+#' count) and, for each ion, find inside its own key window the one that ranks
+#' first in the hit set (the smallest idxMap value); if that representative is
+#' not taken yet, keep the current ion and mark the representative as taken.
+#' Note that what is kept is the *current* ion, not the representative itself --
+#' that is what the original does.
 #'
-#' @param cur 当前离子下标向量（已按 count 降序）
-#' @param key 全部离子的键向量
-#' @param error_range 容差
-#' @return 保留的离子下标向量（保持 cur 的顺序）
-dmf_distinct_pass <- function(cur, key, error_range) {
+#' @param cur current ion index vector (already descending by count)
+#' @param key key vector of all ions
+#' @param error_range tolerance, unit given by unit
+#' @param mz m/z vector as long as cur; required in ppm mode (the tolerance is
+#'   converted per row)
+#' @param unit "ppm" or "Da"
+#' @return index vector of the ions kept (cur order preserved)
+dmf_distinct_pass <- function(cur, key, error_range, mz = NULL, unit = "Da") {
   n <- length(cur)
   if (n <= 1L) return(cur)
 
-  kv <- key[cur]
-  o <- order(kv)                 # 稳定排序；同键元素同处一个窗口，顺序无关
-  ks <- kv[o]
-  rank_in_cur <- o               # 每个"键有序槽位"在 cur 中的位置
+  ppm <- .dmf_vec_tol(unit)
+  if (ppm && is.null(mz)) {
+    stop("ppm mode needs the m/z of each ion (the mz argument of dmf_distinct_pass)")
+  }
 
-  amin <- dmf_argmin_in_window(ks, ks, error_range, rank_in_cur)
+  kv <- key[cur]
+  o <- order(kv)                 # stable sort; equal keys share a window, so order is irrelevant
+  ks <- kv[o]
+  rank_in_cur <- o               # position in cur of each key-ordered slot
+
+  tol <- if (ppm) .dmf_tol_da(mz, error_range, unit)[o] else error_range
+  amin <- dmf_argmin_in_window(ks, ks, tol, rank_in_cur, vec_tol = ppm)
   canon <- integer(n)
   canon[rank_in_cur] <- amin
   cur[!duplicated(canon)]
 }
 
-#' 唯一化主循环（最多两轮，与原版 do/while 一致）
-dmf_distinct_ions <- function(cur, key, error_range) {
-  res <- dmf_distinct_pass(cur, key, error_range)
+#' Main deduplication loop (at most two rounds, matching the original do/while)
+dmf_distinct_ions <- function(cur, key, error_range, mz = NULL, unit = "Da") {
+  res <- dmf_distinct_pass(cur, key, error_range, mz = mz, unit = unit)
   if (length(res) == length(cur)) return(res)
-  dmf_distinct_pass(res, key, error_range)
+  dmf_distinct_pass(res, key, error_range,
+                    mz = if (is.null(mz)) NULL else mz[match(res, cur)],
+                    unit = unit)
 }
 
-#' 取出指定下标的离子子集（保留 mat 列）
+#' Subset the ions by index (the mat column is kept)
 dmf_subset_ions <- function(ions, idx) {
   out <- data.frame(
     no = ions$no[idx],
@@ -641,32 +856,35 @@ dmf_subset_ions <- function(ions, idx) {
 
 
 # ============================================================
-# 6. 打分（scoringP50Ions / averageScore4AllIons / mergeScore）
+# 6. Scoring (scoringP50Ions / averageScore4AllIons / mergeScore)
 # ============================================================
 
-#' 50% 离子的单独打分（P50Score）
+#' Individual scoring of the 50% ions (P50Score)
 #'
-#' 以 m/z 为键做唯一化分组：先为每个离子找 mz 窗口内的代表（findIon），
-#' 再按代表分组，组内统计离子数与平均强度（对 averageIntensity 求均值）。
+#' Deduplicate into groups keyed on m/z: find each ion's representative inside
+#' the m/z window (findIon), then group by representative and, within a group,
+#' count the ions and average their intensity (the mean of averageIntensity).
 #'
-#' @param cur 离子下标向量（distinct 后的顺序 == 原版 _p50Ions 顺序）
-#' @param ions 全部离子
-#' @param error_range 容差
-#' @param cfg 配置
-#' @return data.frame，行序与 cur 一致
+#' @param cur ion index vector (post-dedup order == the original _p50Ions order)
+#' @param ions all ions
+#' @param error_range tolerance
+#' @param cfg configuration
+#' @return data.frame with the same row order as cur
 dmf_score_p50 <- function(cur, ions, error_range, cfg) {
   digits <- cfg$FloatCount
   n <- length(cur)
   if (n == 0L) return(NULL)
 
+  ppm <- .dmf_vec_tol(cfg$ErrorRangeUnit)
   mzv <- ions$mz[cur]
   avgv <- ions$avg[cur]
   o <- order(mzv)
   ks <- mzv[o]
   rank_in_cur <- o
-  amin <- dmf_argmin_in_window(ks, ks, error_range, rank_in_cur)
+  tol <- if (ppm) .dmf_tol_da(mzv, error_range, cfg$ErrorRangeUnit)[o] else error_range
+  amin <- dmf_argmin_in_window(ks, ks, tol, rank_in_cur, vec_tol = ppm)
 
-  # 按代表（键有序槽位）分组
+  # Group by representative (key-ordered slot)
   cnt_grp <- tabulate(amin, nbins = n)
   sum_grp <- .dmf_group_sum(avgv[o], amin, n)
 
@@ -682,7 +900,7 @@ dmf_score_p50 <- function(cur, ions, error_range, cfg) {
                       dmf_score(rel, cfg$p50RelativeIntensityRange2, cfg$p50RelativeIntensityValue2))
   total <- int_score * cnt_score * rel_score
 
-  back <- order(o)   # 从键有序槽位还原到 cur 顺序
+  back <- order(o)   # undo the key ordering, back to cur order
 
   data.frame(
     idx = cur,
@@ -703,32 +921,38 @@ dmf_score_p50 <- function(cur, ions, error_range, cfg) {
   )
 }
 
-#' 全离子打分（IonScore，noMz 维度 + rtMz 维度）
+#' All-ion scoring (IonScore, noMz dimension + rtMz dimension)
 #'
-#' 两个维度都建立在"代表 = 窗口内原始下标最小者"之上：
-#'   noMz 维度：同一样品内、同一时间段、m/z 相近的离子归为一组；
-#'   rtMz 维度：跨样品、同一 RT&m/z 的离子归为一组。
-#' 第一个维度给出 noMzTotalScore，第二个维度对它按 rtMz 求均值。
+#' Both dimensions rest on "representative = smallest original index in the
+#' window":
+#'   noMz dimension: ions within one sample, one time slice and with a similar
+#'     m/z form a group;
+#'   rtMz dimension: ions across samples sharing the same RT&m/z form a group.
+#' The first dimension yields noMzTotalScore; the second averages it per rtMz.
 #'
-#' @param ions 全部离子
-#' @param error_range 容差
-#' @param cfg 配置
-#' @return data.frame，行序与 ions 一致
+#' @param ions all ions
+#' @param error_range tolerance
+#' @param cfg configuration
+#' @return data.frame with the same row order as ions
 dmf_score_all_ions <- function(ions, error_range, cfg) {
   digits <- cfg$FloatCount
   n <- nrow(ions)
   if (n == 0L) return(NULL)
 
-  # ---- 维度一：noMz ----
-  # no&m/z 拼接键量级约 1e7，double 的 ulp 已接近原版 fixOffset，
-  # 因此用「整数部分 + 8 位小数」走十进制精确判定。
-  # 注意 target 与 target_parts 都必须是「键有序」顺序。
+  ppm <- .dmf_vec_tol(cfg$ErrorRangeUnit)
+  tol_all <- .dmf_tol_da(ions$mz, error_range, cfg$ErrorRangeUnit)
+
+  # ---- Dimension one: noMz ----
+  # The no&m/z key is about 1e7, where the double ulp approaches the original
+  # fixOffset, so the integer part plus the 8-decimal fraction is used and the
+  # test runs exactly in decimal.
+  # Note that both target and target_parts must follow the key-sorted order.
   o1 <- order(ions$no_mz)
   k1 <- ions$no_mz[o1]
   k1_parts <- list(ip = ions$no_mz_ip[o1], f8 = ions$no_mz_f8[o1])
   amin1 <- dmf_argmin_in_window(
-    k1, k1, error_range, o1, exact = TRUE,
-    key_parts = k1_parts, target_parts = k1_parts
+    k1, k1, if (ppm) tol_all[o1] else error_range, o1, exact = TRUE,
+    key_parts = k1_parts, target_parts = k1_parts, vec_tol = ppm
   )
   cnt1 <- tabulate(amin1, nbins = n)
   sum1 <- .dmf_group_sum(ions$intensity[o1], amin1, n)
@@ -744,12 +968,14 @@ dmf_score_all_ions <- function(ions, error_range, cfg) {
                             dmf_score(no_mz_rel, cfg$relativeIntensityRange2, cfg$relativeIntensityValue2))
   no_mz_total <- no_mz_int * no_mz_cnt_score * no_mz_rel_score
 
-  # ---- 维度二：rtMz ----
+  # ---- Dimension two: rtMz ----
   o2 <- order(ions$rt_mz)
   k2 <- ions$rt_mz[o2]
-  amin2 <- dmf_argmin_in_window(k2, k2, error_range, o2)
+  amin2 <- dmf_argmin_in_window(k2, k2, if (ppm) tol_all[o2] else error_range, o2,
+                                vec_tol = ppm)
   cnt2 <- tabulate(amin2, nbins = n)
-  # 组内求和的对象是维度一的 noMzTotalScore（按 ions 原始下标取）
+  # The within-group sum runs over noMzTotalScore from dimension one, indexed
+  # by the original ion index
   tot2_raw <- numeric(n)
   tot2_raw[o1] <- no_mz_total
   sum2 <- .dmf_group_sum(tot2_raw[o2], amin2, n)
@@ -788,39 +1014,50 @@ dmf_score_all_ions <- function(ions, error_range, cfg) {
 
 
 # ============================================================
-# 7. 同位素查找（IonCalculator.calcIsotopes）
+# 7. Isotope search (IonCalculator.calcIsotopes)
 # ============================================================
 
-#' 为每个离子查找 M+1 / M+2 / M+3 并判定是否为同位素峰
+#' Look up M+1 / M+2 / M+3 for every ion and decide whether it is an isotope peak
 #'
-#' 判定规则完全照抄原版的嵌套 IF/AND/OR（含 null 传播）：
-#'   X = 100<=mz<=1000 且 1<=M/M+1<=50  或  mz>=1000 且 0.5<=M/M+1<=5
-#'   Y = X==1 且 M+1/M+2>1 且 （1<=M+1/M+2<=100 或 0.5<=…<=5，按 mz 分段）
-#'   Z = Y==1 且 M+2/M+3>1 且 （同上）
-#' 任一层级缺失（未找到峰）时该层级结果为空，最终在表里写 NullCellValue(0)。
+#' The decision rules copy the original's nested IF/AND/OR verbatim (null
+#' propagation included):
+#'   X = 100<=mz<=1000 and 1<=M/M+1<=50, or mz>=1000 and 0.5<=M/M+1<=5
+#'   Y = X==1 and M+1/M+2>1 and (1<=M+1/M+2<=100 or 0.5<=...<=5, split by mz)
+#'   Z = Y==1 and M+2/M+3>1 and (same as above)
+#' When a level is missing (no peak found) that level stays empty and the cell
+#' ends up holding NullCellValue(0).
 #'
-#' @param ions 全部离子
-#' @param error_range 容差
-#' @param cfg 配置
-#' @return data.frame，行序与 ions 一致
+#' @param ions all ions
+#' @param error_range tolerance
+#' @param cfg configuration
+#' @return data.frame with the same row order as ions
 dmf_calc_isotopes <- function(ions, error_range, cfg) {
   digits <- cfg$FloatCount
   n <- nrow(ions)
   if (n == 0L) return(NULL)
+
+  ppm <- .dmf_vec_tol(cfg$ErrorRangeUnit)
+  tol_all <- .dmf_tol_da(ions$mz, error_range, cfg$ErrorRangeUnit)
 
   o <- order(ions$rt_no_mz)
   k <- ions$rt_no_mz[o]
   key_parts <- list(ip = ions$rt_no_mz_ip[o], f8 = ions$rt_no_mz_f8[o])
   target_parts <- list(ip = ions$rt_no_mz_ip, f8 = ions$rt_no_mz_f8)
 
-  # rtNoMz 是 rt/no/mz 拼出来的伪数值，量级可达 1e8，
-  # 窗口边界必须走十进制精确判定，否则「恰好差 0.002」的邻元会被误纳。
-  # offset 交给比较环节处理，避免 target + delta 再引入一次舍入。
+  # rtNoMz is a pseudo-number built from rt/no/mz and reaches 1e8, so the window
+  # boundary must be tested exactly in decimal; otherwise a neighbour differing
+  # by exactly 0.002 is wrongly admitted.
+  # The offset is handled inside the comparison so that target + delta cannot add
+  # another rounding step.
+  # Note that target follows the original ion order, so the per-row tolerance is
+  # taken in that order too.
   pick <- function(delta) {
-    amin <- dmf_argmin_in_window(k, ions$rt_no_mz, error_range, o,
+    amin <- dmf_argmin_in_window(k, ions$rt_no_mz,
+                                 if (ppm) tol_all else error_range, o,
                                  exact = TRUE, offset = delta,
                                  key_parts = key_parts,
-                                 target_parts = target_parts)
+                                 target_parts = target_parts,
+                                 vec_tol = ppm)
     idx <- rep(NA_integer_, n)
     hit <- !is.na(amin)
     idx[hit] <- o[amin[hit]]
@@ -842,11 +1079,12 @@ dmf_calc_isotopes <- function(ions, error_range, cfg) {
   m1_m2 <- dmf_divide(m1_int, m2_int, digits)
   m2_m3 <- dmf_divide(m2_int, m3_int, digits)
 
-  # 原版判定：
+  # The original decision:
   #   X = IF(OR(AND(100<=E<=1000, 1<=T<=50), AND(E>=1000, 0.5<=T<=5)), 1, 0)
   #   Y = IF(AND(U>1, X==1, OR(AND(100<=E<=1000, 1<=U<=100), AND(E>=1000, 0.5<=U<=5))), 1, 0)
   #   Z = IF(AND(V>1, Y==1, OR(AND(100<=E<=1000, 1<=V<=100), AND(E>=1000, 0.5<=V<=5))), 1, 0)
-  # e/v 必须同长度逐元素配对（v 是取子集后的比值，不能再拿全长 E 一起算）
+  # e and v must be paired element-wise at equal length (v is a ratio on a
+  # subset, so the full-length E cannot be used together with it)
   in_seg <- function(e, v, lo1, hi1, lo2, hi2) {
     (e >= 100 & e <= 1000 & v >= lo1 & v <= hi1) |
       (e >= 1000 & v >= lo2 & v <= hi2)
@@ -894,23 +1132,26 @@ dmf_calc_isotopes <- function(ions, error_range, cfg) {
 
 
 # ============================================================
-# 8. 跨组比对（p80CompareWith + mergeDiff）
+# 8. Cross-group comparison (p80CompareWith + mergeDiff)
 # ============================================================
 
-#' 本组 80% 离子对照另一组的总离子
+#' Compare this group's 80% ions with the other group's total ions
 #'
-#' 另一组按 count 降序建立索引（idxMap），在 rtMz 有序数组里取窗口，
-#' 命中集合中 count 序最靠前者即为配对的 b（原版 findIon().get(0) 语义）。
-#' 容差用 ErrorRangeInGroups（默认 0.003）。
+#' The other group is indexed in descending count order (idxMap); a window is
+#' taken in the rtMz-sorted array and the hit that comes first in count order is
+#' the paired b (the original findIon().get(0) semantics). The tolerance is
+#' ErrorRangeInGroups (0.003 by default).
 #'
-#' @param cur 本组 80% 离子下标
-#' @param ions 本组离子
-#' @param other 另一组 list(ions, sample_names)
-#' @param cfg 配置
+#' @param cur indices of this group's 80% ions
+#' @param ions this group's ions
+#' @param other the other group, list(ions, sample_names)
+#' @param cfg configuration
 dmf_compare_p80 <- function(cur, ions, other, cfg) {
   n_this <- length(cur)
   if (n_this == 0L) return(NULL)
   error <- cfg$ErrorRangeInGroups
+  unit <- cfg$ErrorRangeUnit
+  ppm <- .dmf_vec_tol(unit)
   digits <- cfg$FloatCount
 
   other_ions <- other$ions
@@ -921,7 +1162,9 @@ dmf_compare_p80 <- function(cur, ions, other, cfg) {
   o <- order(other_ions$rt_mz)
   ks <- other_ions$rt_mz[o]
   target <- ions$rt_mz[cur]
-  amin <- dmf_argmin_in_window(ks, target, error, count_rank[o])
+  # The tolerance is converted from the **query side** (this group's ions) m/z
+  tol <- if (ppm) .dmf_tol_da(ions$mz[cur], error, unit) else error
+  amin <- dmf_argmin_in_window(ks, target, tol, count_rank[o], vec_tol = ppm)
 
   b_idx <- rep(NA_integer_, n_this)
   hit <- !is.na(amin)
@@ -940,28 +1183,31 @@ dmf_compare_p80 <- function(cur, ions, other, cfg) {
              b_count = b_count, a_b = a_b, stringsAsFactors = FALSE)
 }
 
-#' 差异离子汇总（mergeDiff）
+#' Differential ion summary (mergeDiff)
 #'
-#' 每行 = 本组一个 80% 离子 + 另一组配对离子 + 单独得分 + 平均得分 +
-#' 同位素判定 + 两组各样品强度。
+#' Each row = one 80% ion of this group + its paired ion in the other group +
+#' individual score + mean score + isotope verdict + per-sample intensity of both
+#' groups.
 #'
-#' 得分不是按 rtMz 精确查表，而是复刻原版 Helper.binarySearch 的
-#' "无容差" 版本：找不到精确键时返回插入位置附近的元素，因此可能取到
-#' 邻近距离最近的离子的分数。这里保持原版行为。
+#' The score is not looked up exactly by rtMz; instead the "no tolerance" version
+#' of the original Helper.binarySearch is reproduced: with no exact key it returns
+#' the element around the insertion point, so the score may come from the nearest
+#' neighbouring ion. The original behaviour is kept here.
 #'
-#' 排序：先按 count 降序，再按 bCount 降序（缺失排最后），两步都是稳定排序。
+#' Ordering: descending count, then descending bCount (missing last); both steps
+#' are stable sorts.
 #'
-#' @param cmp dmf_compare_p80() 的结果
-#' @param ions 本组离子
-#' @param p50_ions 本组 50% 离子（与 distinct 顺序一致）
-#' @param p50_score dmf_score_p50() 结果
-#' @param iso dmf_calc_isotopes() 结果
-#' @param other 另一组 list(ions, sample_names)
+#' @param cmp result of dmf_compare_p80()
+#' @param ions this group's ions
+#' @param p50_ions this group's 50% ions (same order as the dedup result)
+#' @param p50_score result of dmf_score_p50()
+#' @param iso result of dmf_calc_isotopes()
+#' @param other the other group, list(ions, sample_names)
 dmf_merge_diff <- function(cmp, ions, p50_ions, p50_score, iso, other) {
   n <- nrow(cmp)
   if (n == 0L) return(NULL)
 
-  # ---- 得分查表 ----
+  # ---- Score lookup ----
   merged_key <- p50_ions$rt_mz
   o <- order(merged_key)
   ks <- merged_key[o]
@@ -977,11 +1223,12 @@ dmf_merge_diff <- function(cmp, ions, p50_ions, p50_score, iso, other) {
   }, integer(1))
   merged_pos <- o[slot]
 
-  # ---- 同位素查表（原版只按 M+1 建表，M+2/M+3 也用它做存在性判断） ----
-  # 原版建三张映射表：键分别是 m1FindRtNoMz / m2FindRtNoMz / m3FindRtNoMz，
-  # 用 Helper.toMapF（重复键「首次命中优先」，与 R 的 match 语义一致）。
-  # 取值时三列都先用 m1Isotopes.containsKey(rtNoMz) 把门，
-  # 再各自到自己的表里取 —— 不是「找到 M+1 那一行的 m2 标志」。
+  # ---- Isotope lookup (only M+1 keys a map; M+2/M+3 use it as the gate) ----
+  # The original builds three maps keyed on m1FindRtNoMz / m2FindRtNoMz /
+  # m3FindRtNoMz with Helper.toMapF (first hit wins on duplicate keys, the same
+  # semantics as R's match). All three columns are first gated by
+  # m1Isotopes.containsKey(rtNoMz) and then read from their own map -- it is not
+  # "take the m2 flag of whatever row held M+1".
   iso_target <- ions$rt_no_mz[cmp$idx]
   hit1 <- match(iso_target, iso$m1_find)
   hit2 <- match(iso_target, iso$m2_find)
@@ -996,7 +1243,7 @@ dmf_merge_diff <- function(cmp, ions, p50_ions, p50_score, iso, other) {
   got3 <- got & !is.na(hit3)
   iso3[got3] <- iso$m3_iso[hit3[got3]]
 
-  # ---- 另一组各样品强度（缺失记 0.0，与原版 valuesOr0 一致） ----
+  # ---- Per-sample intensity of the other group (missing becomes 0.0, as valuesOr0 does) ----
   n_other <- length(other$sample_names)
   inten2 <- matrix(0, nrow = n, ncol = n_other)
   has_b <- !is.na(cmp$b_idx)
@@ -1027,10 +1274,11 @@ dmf_merge_diff <- function(cmp, ions, p50_ions, p50_score, iso, other) {
     stringsAsFactors = FALSE
   )
   out$inten1 <- ions$mat[cmp$idx, , drop = FALSE]
-  # 原版两组的样品强度列都用 valuesOr0：该样品没测到就是 0.0，不是空白
+  # The original writes both groups' per-sample intensity with valuesOr0: a sample
+  # that was not measured is 0.0, not a blank cell
   out$inten1[is.na(out$inten1)] <- 0
   out$inten2 <- inten2
-  # 稳定排序：先 count 降序，再 bCount 降序（NA 最后）
+  # Stable sort: descending count, then descending bCount (NA last)
   o1 <- order(-out$count)
   out <- out[o1, , drop = FALSE]
   bc <- out$b_count
@@ -1042,21 +1290,21 @@ dmf_merge_diff <- function(cmp, ions, p50_ions, p50_score, iso, other) {
 
 
 # ============================================================
-# 9. 输出表构造（对应各 toSheetData）
+# 9. Output sheet construction (the various toSheetData)
 # ============================================================
 
-#' 表结构：list(name, header = list(row1, row2...), cols = 具名列向量)
+#' Sheet structure: list(name, header = list(row1, row2, ...), cols = named column vectors)
 dmf_sheet <- function(name, header, cols) {
   list(name = name, header = header, cols = cols)
 }
 
-#' toSheetData(List<Ion>) 的列
+#' Columns of toSheetData(List<Ion>)
 dmf_cols_ion_table <- function(ions, idx) {
   list(no_int = ions$no_int[idx], rt = ions$rt[idx], rt_mz = ions$rt_mz[idx],
        mz = ions$mz[idx], avg = ions$avg[idx], count = ions$count[idx])
 }
 
-#' 组合表头单元格（保持数值/文本类型，NA 表示空单元格）
+#' Assemble header cells (keeping numeric/text types; NA means an empty cell)
 dmf_hdr <- function(...) {
   parts <- list(...)
   out <- list()
@@ -1064,10 +1312,11 @@ dmf_hdr <- function(...) {
   out
 }
 
-#' 复刻 BigDecimalHelper.valuesMayNA / to01MayNA
+#' Reproduce BigDecimalHelper.valuesMayNA / to01MayNA
 #'
-#' 原版这两个函数把 null 替换成 Config.instance.NullCellValue，
-#' 而该字段的默认值是整数 0。所以「未找到」在成品 Excel 里是 0，不是空白。
+#' Both original functions replace null with Config.instance.NullCellValue, whose
+#' default is the integer 0. So "not found" shows up as 0 in the finished Excel,
+#' not as a blank cell.
 dmf_or0 <- function(v) {
   v[is.na(v)] <- 0
   v
@@ -1075,30 +1324,36 @@ dmf_or0 <- function(v) {
 
 .dmf_sheet_scoring <- function(g, p50_score, ion_score) {
   list(
-    dmf_sheet(paste0(g, "50%离子单独打分"),
-              list(c("sample", "RT", "RT&m/z", "m/z", "平均离子强度", "查找(离子唯一化处理)",
-                     "计数", "重复离子平均强度", "单个离子平均强度/重复离子平均强度",
-                     "强度打分", "计数打分", "相对离子强度打分", "总得分")),
+    dmf_sheet(paste0(g, " 50% ion scores"),
+              list(c("sample", "RT", "RT&m/z", "m/z", "Mean intensity", "Match (dedup. ions)",
+                     "Count", "Repeated-ion mean intensity",
+                     "Single/repeated mean intensity",
+                     "Intensity score", "Count score", "Relative intensity score",
+                     "Total score")),
               list(no_int = p50_score$no_int, rt = p50_score$rt, rt_mz = p50_score$rt_mz,
                    mz = p50_score$mz, avg = p50_score$avg, std_mz = p50_score$std_mz,
                    std_count = p50_score$std_count, std_avg = p50_score$std_avg,
                    rel = p50_score$rel, int_score = p50_score$int_score,
                    count_score = p50_score$count_score, rel_score = p50_score$rel_score,
                    total = p50_score$total)),
-    dmf_sheet(paste0(g, "总离子平均得分"),
+    dmf_sheet(paste0(g, " all-ion scores"),
               list(
-                c("所有样品离子汇总", NA, NA,
-                  "样品编号必须大于2，因为m/z为100-1500，要避免sample&m/z不会与m/z重复"),
+                c("All-sample ion summary", NA, NA,
+                  paste("Sample No. must exceed 2 because m/z spans 100-1500 and",
+                        "sample&m/z would otherwise collide with m/z")),
                 c("sample (No)", "RT", "RT&m/z", "No&m/z", "m/z", "Intensity", "-",
-                  "查找(单个样品内所有时间段离子唯一化)", "计数(单个样品)",
-                  "重复离子平均强度(单个样品)", "单个离子平均强度/重复离子平均强度",
-                  "强度打分", "计数打分", "相对离子强度", "总得分", "-",
-                  "查找（每个时间段所有样品离子唯一化）", "计数", "得分总和",
-                  "平均得分", "得分差")
+                  "Match (dedup. within one sample, all time slices)",
+                  "Count (single sample)",
+                  "Repeated-ion mean intensity (single sample)",
+                  "Single/repeated mean intensity",
+                  "Intensity score", "Count score", "Relative intensity",
+                  "Total score", "-",
+                  "Match (dedup. across all samples per time slice)", "Count",
+                  "Sum of scores", "Mean score", "Score difference")
               ),
               dmf_cols_ion_score(ion_score)),
-    dmf_sheet(paste0(g, "离子打分汇总"),
-              list(c("sample", "RT", "RT&m/z", "m/z", "单独得分", "平均得分")),
+    dmf_sheet(paste0(g, " score summary"),
+              list(c("sample", "RT", "RT&m/z", "m/z", "Individual score", "Mean score")),
               dmf_cols_merged_score(p50_score))
   )
 }
@@ -1121,13 +1376,14 @@ dmf_cols_merged_score <- function(p50_score) {
 
 .dmf_sheet_isotope <- function(g, iso) {
   n <- nrow(iso)
-  dmf_sheet(paste0(g, "同位素离子查找"),
+  dmf_sheet(paste0(g, " isotope search"),
             list(
-              c("总离子查找同位素", NA, "A组总离子", NA, NA, NA, NA,
-                "计算理论M+1", "计算理论M+2", "计算理论M+3", NA,
-                "查找实际M+1", "查找实际M+2", "查找实际M+3", NA,
-                "查找实际M+1离子强度", "计算理论M+2离子强度", "查找实际M+3离子强度", NA,
-                "离子强度比", NA, NA, NA, "判断是否为M峰的同位素峰", NA, NA),
+              c("Isotope search over all ions", NA, "Group A all ions", NA, NA, NA, NA,
+                "Theoretical M+1", "Theoretical M+2", "Theoretical M+3", NA,
+                "Observed M+1", "Observed M+2", "Observed M+3", NA,
+                "Observed M+1 intensity", "Theoretical M+2 intensity",
+                "Observed M+3 intensity", NA,
+                "Intensity ratio", NA, NA, NA, "Isotope of the M peak", NA, NA),
               c("sample (No)", "RT", "RT&m/z", "RT&No&m/z", "m/z", "Intensity", "-",
                 "RT&No&(M+1)", "RT&No&(M+2)", "RT&No&(M+3)", "-",
                 "RT&No&(M+1)", "RT&No&(M+2)", "RT&No&(M+3)", "-",
@@ -1156,11 +1412,13 @@ dmf_cols_merged_score <- function(p50_score) {
 .dmf_sheet_p80_compare <- function(g, p80_str, other_g, cmp, ions, other) {
   n_other <- length(other$sample_names)
   n <- nrow(cmp)
-  # 原版把 10 个空单元格写死（r1.addAll(Arrays.asList(null x10))），此处照抄
-  h1 <- dmf_hdr(paste0("A组", p80_str, "离子"), rep(NA, 10), "B组离子强度")
-  h2 <- dmf_hdr(list("sample", "RT", "RT&m/z", "m/z", "平均离子强度", "离子计数",
-                     paste0(other_g, "RT&m/z"), paste0(other_g, "平均离子强度"),
-                     paste0(other_g, "离子计数"), paste0(g, "/", other_g), "-"),
+  # The original hardcodes 10 empty cells (r1.addAll(Arrays.asList(null x10)));
+  # copied verbatim here
+  h1 <- dmf_hdr(paste0("Group A ", p80_str, " ions"), rep(NA, 10),
+                "Group B intensity")
+  h2 <- dmf_hdr(list("sample", "RT", "RT&m/z", "m/z", "Mean intensity", "Ion count",
+                     paste0(other_g, " RT&m/z"), paste0(other_g, " mean intensity"),
+                     paste0(other_g, " ion count"), paste0(g, "/", other_g), "-"),
                 as.list(as.numeric(other$sample_names)))
   cols <- list(no_int = ions$no_int[cmp$idx], rt = ions$rt[cmp$idx],
                rt_mz = ions$rt_mz[cmp$idx], mz = ions$mz[cmp$idx],
@@ -1171,25 +1429,28 @@ dmf_cols_merged_score <- function(p50_score) {
   inten <- matrix(NA_real_, nrow = n, ncol = n_other)
   has_b <- !is.na(cmp$b_idx)
   if (any(has_b)) inten[has_b, ] <- other$ions$mat[cmp$b_idx[has_b], , drop = FALSE]
-  # 原版逐列调 valuesMayNA(bIntensityRow.get(sampleName))，null 会变成 0
+  # The original calls valuesMayNA(bIntensityRow.get(sampleName)) per column, so
+  # null becomes 0
   inten[is.na(inten)] <- 0
   for (j in seq_len(n_other)) cols[[paste0("s", j)]] <- inten[, j]
-  dmf_sheet(paste0(g, p80_str, "离子和", other_g, "比对"), list(h1, h2), cols)
+  dmf_sheet(paste0(g, " ", p80_str, " ions vs ", other_g), list(h1, h2), cols)
 }
 
-#' 两组样本的 t 检验 P 值（向量化，等价于 Excel 的 TTEST(a, b, 2, 2)）
+#' t-test P value of two sample groups (vectorised; equals Excel TTEST(a, b, 2, 2))
 #'
-#' Excel 的 TTEST(array1, array2, tails=2, type=2) 是「双尾 + 双样本 + 等方差
-#' （pooled variance）」，对应 R 的 t.test(x, y, var.equal = TRUE) 的双尾 P 值。
-#' 这里不调用 t.test（每行一次太慢），直接按 pooled 公式向量化：
+#' Excel TTEST(array1, array2, tails=2, type=2) is "two-tailed, two-sample, equal
+#' variance (pooled variance)", which corresponds to the two-tailed P value of
+#' R's t.test(x, y, var.equal = TRUE).
+#' R's t.test is not called here (once per row it is far too slow); the pooled
+#' formula is vectorised directly:
 #'   sp2 = ((n1-1)*v1 + (n2-1)*v2) / (n1+n2-2)
 #'   t   = (mean1 - mean2) / sqrt(sp2 * (1/n1 + 1/n2))
 #'   df  = n1 + n2 - 2
 #'   p   = 2 * pt(-|t|, df)
-#' NA 按 R 的常规做法逐格剔除（与 t.test 的 na.rm 行为一致）。
+#' NA is dropped cell by cell as R normally does (same as t.test's na.rm).
 #'
-#' @param m1,m2 数值矩阵，行 = 离子，列 = 样品
-#' @return 数值向量，长度 = nrow
+#' @param m1,m2 numeric matrices, rows = ions, columns = samples
+#' @return numeric vector of length nrow
 dmf_ttest_pval <- function(m1, m2) {
   m1 <- as.matrix(m1)
   m2 <- as.matrix(m2)
@@ -1201,7 +1462,7 @@ dmf_ttest_pval <- function(m1, m2) {
   n2 <- rowSums(!is.na(m2))
   m_1 <- rowSums(m1, na.rm = TRUE) / pmax(n1, 1L)
   m_2 <- rowSums(m2, na.rm = TRUE) / pmax(n2, 1L)
-  # 平方和 - n*mean^2，浮点误差可能出极小负数，截到 0
+  # Sum of squares - n*mean^2; floating error can make it slightly negative, clamp at 0
   ss1 <- pmax(rowSums(m1 * m1, na.rm = TRUE) - n1 * m_1 * m_1, 0)
   ss2 <- pmax(rowSums(m2 * m2, na.rm = TRUE) - n2 * m_2 * m_2, 0)
 
@@ -1214,15 +1475,16 @@ dmf_ttest_pval <- function(m1, m2) {
   tval <- (m_1 - m_2) / se
   p <- 2 * stats::pt(-abs(tval), df)
 
-  # 方差为 0（各组内强度全相同）时 se = 0，t 变成 Inf/NaN：
-  # 均值相同 -> p = 1，均值不同 -> p = 0（Excel 这两种情况会返回 #DIV/0!）
+  # With zero variance (all intensities equal inside a group) se = 0 and t becomes
+  # Inf/NaN: equal means -> p = 1, different means -> p = 0 (Excel returns
+  # #DIV/0! in both cases)
   bad <- !is.finite(p) & is.finite(m_1) & is.finite(m_2)
   if (any(bad)) {
     same <- bad & abs(m_1 - m_2) <= 1e-12 * pmax(1, abs(m_1))
     p[bad] <- 0
     p[same] <- 1
   }
-  # 每组至少 2 个有效值才谈得上组内方差
+  # Within-group variance only exists with at least 2 valid values per group
   p[n1 < 2L | n2 < 2L] <- NA_real_
   p[!is.finite(p)] <- NA_real_
   p
@@ -1230,24 +1492,32 @@ dmf_ttest_pval <- function(m1, m2) {
 
 .dmf_sheet_diff <- function(g_a, g_b, p80_str, diff, samples_a, samples_b) {
   n <- nrow(diff)
-  h1 <- dmf_hdr(paste0(g_a, p80_str, "离子"), rep(NA, 18), paste0(g_a, "离子强度"),
-                rep(NA, length(samples_a)), NA, paste0(g_b, "离子强度"))
-  h2 <- dmf_hdr(list("sample (No)", "RT", "RT&m/z", "RT&No&m/z", "m/z", "平均离子强度", "离子计数",
-                     paste0(g_b, "RT&m/Z"), paste0(g_b, "平均离子强度"), paste0(g_b, "离子计数"),
-                     paste0(g_a, "/", g_b), paste0(g_b, "m/z"), "-",
-                     "单独得分", "平均得分", "P值", "M+1", "M+2", "M+3", "-"),
+  h1 <- dmf_hdr(paste0(g_a, " ", p80_str, " ions"), rep(NA, 18),
+                paste0(g_a, " intensity"),
+                rep(NA, length(samples_a)), NA, paste0(g_b, " intensity"))
+  h2 <- dmf_hdr(list("sample (No)", "RT", "RT&m/z", "RT&No&m/z", "m/z",
+                     "Mean intensity", "Ion count",
+                     paste0(g_b, " RT&m/z"), paste0(g_b, " mean intensity"),
+                     paste0(g_b, " ion count"),
+                     paste0(g_a, "/", g_b), paste0(g_b, " m/z"), "-",
+                     "Individual score", "Mean score", "P value",
+                     "M+1", "M+2", "M+3", "-"),
                 as.list(as.numeric(samples_a)), list("-"),
                 as.list(as.numeric(samples_b)))
 
-  # P 值列：原版写的是 Excel 公式 =TTEST(U{r}:AD{r},AF{r}:AO{r},2,2)，但
-  # openxlsx 的 writeData() 不会把 "=" 开头的字符串当公式（实测写进 xlsx 是
-  # t="s" 的共享字符串，没有 <f> 节点），Excel/WPS 打开就只显示公式原文；
-  # DT 预览同理。所以这里直接在 R 里把 P 值算成数值，两处输出都正常。
-  # 统计口径与 TTEST(...,2,2) 完全一致：双尾、双样本、等方差。
+  # P value column: the original writes the Excel formula
+  # =TTEST(U{r}:AD{r},AF{r}:AO{r},2,2), but openxlsx's writeData() does not treat a
+  # string starting with "=" as a formula (it lands in the xlsx as a shared string
+  # with t="s" and no <f> node), so Excel/WPS displays the formula text, and the DT
+  # preview does the same. The P value is therefore computed as a number in R, so
+  # both outputs are correct.
+  # The statistics are identical to TTEST(...,2,2): two-tailed, two-sample,
+  # equal variance.
   p_col <- dmf_ttest_pval(diff$inten1, diff$inten2)
 
-  # 另一组 m/z：从 b 的 RT&m/z 字符串里按 b 的 rt 位数截掉前缀（原版做法：
-  # int len = (int)Math.log10(b.rt) + 1; mz.substring(len)）
+  # Other group's m/z: strip the prefix of b's RT&m/z string using b's RT digit
+  # count (what the original does:
+  # int len = (int)Math.log10(b.rt) + 1; mz.substring(len))
   b_mz <- rep(NA_real_, n)
   ok <- !is.na(diff$b_rt_mz)
   if (any(ok)) {
@@ -1273,18 +1543,240 @@ dmf_ttest_pval <- function(m1, m2) {
   for (j in seq_along(samples_b)) cols[[paste0("b", j)]] <- diff$inten2[, j]
   cols[["dash4"]] <- rep(NA_character_, n)
 
-  dmf_sheet(sprintf("%s和%s差异离子(%s比%s)", g_a, g_b, g_a, g_b), list(h1, h2), cols)
+  dmf_sheet(sprintf("%s vs %s diff. ions", g_a, g_b), list(h1, h2), cols)
+}
+
+
+# ------------------------------------------------------------
+# Merged table: each of the two differential-ion tables uses its own group's 80%
+# ions as the row set, so one ion appears once in each of them (with the other
+# side possibly zero throughout). The two are combined here into one union table:
+# one row per ion, both sides' intensities side by side, and the direction decided
+# directly from the group mean intensity ratio plus the P value.
+# ------------------------------------------------------------
+
+#' Look up the "individual score / mean score" of one group's ions
+#'
+#' Byte-for-byte equivalent to the binarySearch lookup inside dmf_merge_diff()
+#' (no tolerance; on duplicate keys the smallest original index wins). It is
+#' factored out so the merged table can also look up the *other* group's scores.
+#'
+#' @param ions that group's ions
+#' @param idx indices into that group's ions (may contain NA)
+#' @param p50_ions that group's 50% ions
+#' @param p50_score result of dmf_score_p50()
+#' @return list(one = individual score, avg = mean score), same length as idx,
+#'   NA where nothing is found
+dmf_score_at <- function(ions, idx, p50_ions, p50_score) {
+  n <- length(idx)
+  one <- rep(NA_real_, n)
+  avg <- rep(NA_real_, n)
+  if (n == 0L || is.null(p50_ions) || nrow(p50_ions) == 0L) {
+    return(list(one = one, avg = avg))
+  }
+  merged_key <- p50_ions$rt_mz
+  o <- order(merged_key)
+  ks <- merged_key[o]
+  ok <- !is.na(idx)
+  if (any(ok)) {
+    pos <- vapply(idx[ok], function(i) {
+      target <- ions$rt_mz[i]
+      if (is.na(target)) return(NA_integer_)
+      p <- dmf_bsearch_java(ks, target)
+      key_p <- ks[p]
+      s <- p
+      while (s > 1L && ks[s] == key_p) s <- s - 1L
+      if (ks[s] != key_p) s <- s + 1L
+      seg <- s:p
+      o[seg[which.min(o[seg])]]
+    }, integer(1))
+    one[ok] <- p50_score$total[pos]
+    avg[ok] <- p50_score$avg_score_by_rt[pos]
+  }
+  list(one = one, avg = avg)
+}
+
+#' Merge both groups' 80% ions into one union (intermediate structure of the
+#' merged sheet)
+#'
+#' Row set = group A's 80% ions UNION group B's 80% ions:
+#'   * every 80% ion of group A is kept and labelled "Shared" or "A 80% only"
+#'     according to how it matched group B's total ions;
+#'   * then the 80% ions of group B that no A ion matched are appended and
+#'     labelled "B 80% only" -- a B ion already used as an A match does not
+#'     reappear.
+#'
+#' Fold change = group A mean intensity / group B mean intensity; it is 0 when
+#' either side's ion count is 0 (as in the other two tables: 0 always means "not
+#' detected on the denominator or numerator side"; the Verdict column gives the
+#' direction).
+#'
+#' @param diff_ab,diff_ba the two dmf_merge_diff() results
+#' @param cmp_ab,cmp_ba the two dmf_compare_p80() results
+#' @param ga,gb results of dmf_process_group()
+#' @param cfg configuration (reads FoldChangeThreshold / PValueThreshold)
+#' @return NULL (neither group has ions) or list(df, a_int, b_int)
+dmf_union_diff <- function(diff_ab, cmp_ab, diff_ba, cmp_ba, ga, gb, cfg) {
+  fold <- if (is.null(cfg$FoldChangeThreshold)) 2 else as.numeric(cfg$FoldChangeThreshold)
+  alpha <- if (is.null(cfg$PValueThreshold)) 0.05 else as.numeric(cfg$PValueThreshold)
+
+  n_a <- length(ga$sample_names)
+  n_b <- length(gb$sample_names)
+  has_ab <- !is.null(diff_ab) && nrow(diff_ab) > 0L
+  has_ba <- !is.null(diff_ba) && nrow(diff_ba) > 0L
+  if (!has_ab && !has_ba) return(NULL)
+
+  parts <- list()
+  used_b <- integer(0)
+
+  if (has_ab) {
+    partner_b <- cmp_ab$b_idx[match(diff_ab$idx, cmp_ab$idx)]
+    in_b80 <- !is.na(partner_b) & partner_b %in% gb$p80_idx
+    used_b <- partner_b[!is.na(partner_b)]
+    sc_b <- dmf_score_at(gb$ions, partner_b, gb$p50_ions, gb$p50_score)
+    # Matching is driven by this group and is not one-to-one: several A ions can
+    # land on the same B ion. Record how many A ions share each B ion so
+    # downstream code can tell whether a row may be counted independently.
+    share <- tabulate(partner_b, nbins = nrow(gb$ions))
+    parts$ab <- list(
+      src = ifelse(in_b80, "Shared", "A 80% only"),
+      n_share = ifelse(is.na(partner_b), NA_integer_, share[partner_b]),
+      no_int = diff_ab$no_int, rt = diff_ab$rt, rt_mz = diff_ab$rt_mz, mz = diff_ab$mz,
+      a_avg = diff_ab$avg, a_count = diff_ab$count,
+      b_avg = diff_ab$b_avg, b_count = diff_ab$b_count,
+      a_s1 = diff_ab$score_one, a_s2 = diff_ab$score_avg,
+      b_s1 = sc_b$one, b_s2 = sc_b$avg,
+      a_int = diff_ab$inten1, b_int = diff_ab$inten2
+    )
+  }
+
+  if (has_ba) {
+    keep <- !(diff_ba$idx %in% used_b)
+    if (any(keep)) {
+      d <- diff_ba[keep, , drop = FALSE]
+      partner_a <- cmp_ba$b_idx[match(d$idx, cmp_ba$idx)]
+      sc_a <- dmf_score_at(ga$ions, partner_a, ga$p50_ions, ga$p50_score)
+      parts$ba <- list(
+        src = rep("B 80% only", nrow(d)),
+        n_share = rep(NA_integer_, nrow(d)),
+        no_int = d$no_int, rt = d$rt, rt_mz = d$rt_mz, mz = d$mz,
+        # In the reverse table "b_*" is group A (the other side) and
+        # "avg/count" belong to this group, B
+        a_avg = dmf_or0(d$b_avg), a_count = dmf_or0(d$b_count),
+        b_avg = d$avg, b_count = d$count,
+        a_s1 = sc_a$one, a_s2 = sc_a$avg,
+        b_s1 = d$score_one, b_s2 = d$score_avg,
+        a_int = d$inten2, b_int = d$inten1
+      )
+    }
+  }
+
+  if (length(parts) == 0L) return(NULL)
+
+  df <- data.frame(
+    src = unlist(lapply(parts, `[[`, "src"), use.names = FALSE),
+    n_share = as.integer(unlist(lapply(parts, `[[`, "n_share"), use.names = FALSE)),
+    no_int = unlist(lapply(parts, `[[`, "no_int"), use.names = FALSE),
+    rt = unlist(lapply(parts, `[[`, "rt"), use.names = FALSE),
+    rt_mz = unlist(lapply(parts, `[[`, "rt_mz"), use.names = FALSE),
+    mz = unlist(lapply(parts, `[[`, "mz"), use.names = FALSE),
+    a_avg = as.numeric(unlist(lapply(parts, `[[`, "a_avg"), use.names = FALSE)),
+    a_count = as.numeric(unlist(lapply(parts, `[[`, "a_count"), use.names = FALSE)),
+    b_avg = as.numeric(unlist(lapply(parts, `[[`, "b_avg"), use.names = FALSE)),
+    b_count = as.numeric(unlist(lapply(parts, `[[`, "b_count"), use.names = FALSE)),
+    a_s1 = as.numeric(unlist(lapply(parts, `[[`, "a_s1"), use.names = FALSE)),
+    a_s2 = as.numeric(unlist(lapply(parts, `[[`, "a_s2"), use.names = FALSE)),
+    b_s1 = as.numeric(unlist(lapply(parts, `[[`, "b_s1"), use.names = FALSE)),
+    b_s2 = as.numeric(unlist(lapply(parts, `[[`, "b_s2"), use.names = FALSE)),
+    stringsAsFactors = FALSE
+  )
+  df$a_avg[is.na(df$a_avg)] <- 0
+  df$a_count[is.na(df$a_count)] <- 0
+  df$b_avg[is.na(df$b_avg)] <- 0
+  df$b_count[is.na(df$b_count)] <- 0
+  a_int <- do.call(rbind, lapply(parts, `[[`, "a_int"))
+  b_int <- do.call(rbind, lapply(parts, `[[`, "b_int"))
+  a_int[is.na(a_int)] <- 0
+  b_int[is.na(b_int)] <- 0
+
+  # ---- Fold change: 0 when either side is not detected (same as the other two tables)
+  df$a_b <- numeric(nrow(df))
+  ok <- df$a_count > 0 & df$b_count > 0 & df$a_avg > 0 & df$b_avg > 0
+  if (any(ok)) df$a_b[ok] <- dmf_divide(df$a_avg[ok], df$b_avg[ok], cfg$FloatCount)
+
+  # ---- P value: identical to dmf_ttest_pval() (two-tailed, equal variance,
+  # missing values count as 0)
+  df$pval <- dmf_ttest_pval(a_int, b_int)
+
+  # ---- Verdict
+  df$tag <- rep("No change", nrow(df))
+  df$tag[df$b_count <= 0] <- "A only"
+  df$tag[df$a_count <= 0] <- "B only"
+  sig <- !is.na(df$pval) & df$pval < alpha & df$a_count > 0 & df$b_count > 0
+  df$tag[sig & df$a_b >= fold] <- "Higher in A"
+  df$tag[sig & df$a_b <= 1 / fold] <- "Higher in B"
+
+  # ---- Sort by RT and m/z so a human can check it
+  ord <- order(df$rt, df$mz)
+  df <- df[ord, , drop = FALSE]
+  rownames(df) <- NULL
+  list(df = df, a_int = a_int[ord, , drop = FALSE], b_int = b_int[ord, , drop = FALSE],
+       n_shared = sum(df$src == "Shared"))
+}
+
+.dmf_sheet_diff_merged <- function(g_a, g_b, u, samples_a, samples_b) {
+  d <- u$df
+  n <- nrow(d)
+  n_a <- length(samples_a)
+  n_b <- length(samples_b)
+
+  lab <- c("Source", paste0(g_b, " shared partner ions"), "sample (No)", "RT",
+           "RT&m/z", "m/z",
+           paste0(g_a, " mean intensity"), paste0(g_a, " ion count"),
+           paste0(g_b, " mean intensity"), paste0(g_b, " ion count"),
+           paste0(g_a, "/", g_b), "P value", "Verdict",
+           paste0(g_a, " individual score"), paste0(g_a, " mean score"),
+           paste0(g_b, " individual score"), paste0(g_b, " mean score"))
+  n_fixed <- length(lab)
+  h2 <- dmf_hdr(lab, as.list(as.numeric(samples_a)), as.list(as.numeric(samples_b)))
+
+  # Upper grouping header: every position is looked up from lab, so inserting a
+  # column later cannot shift the numbering
+  h1 <- rep(NA_character_, n_fixed + n_a + n_b)
+  h1[1L] <- sprintf("Merged union of the %s and %s 80%% ions (one ion per row)",
+                    g_a, g_b)
+  h1[match(paste0(g_a, " mean intensity"), lab)] <- paste0(g_a, " intensity")
+  h1[match(paste0(g_b, " mean intensity"), lab)] <- paste0(g_b, " intensity")
+  h1[n_fixed + 1L] <- paste0(g_a, " per-sample intensity")
+  if (n_b > 0L) h1[n_fixed + n_a + 1L] <- paste0(g_b, " per-sample intensity")
+
+  cols <- list(src = d$src, n_share = d$n_share,
+               no_int = d$no_int, rt = d$rt, rt_mz = d$rt_mz,
+               mz = d$mz, a_avg = d$a_avg, a_count = d$a_count,
+               b_avg = d$b_avg, b_count = d$b_count, a_b = d$a_b,
+               pval = d$pval, tag = d$tag,
+               a_s1 = d$a_s1, a_s2 = d$a_s2, b_s1 = d$b_s1, b_s2 = d$b_s2)
+  for (j in seq_len(n_a)) cols[[paste0("a", j)]] <- u$a_int[, j]
+  for (j in seq_len(n_b)) cols[[paste0("b", j)]] <- u$b_int[, j]
+
+  stopifnot(length(cols) == length(h2))
+
+  # "Group A+Group B merged ions" is 26 characters, inside Excel's 31-character
+  # limit; the earlier "merged diff. ions" wording overflowed and was silently
+  # truncated to "...merged diff. io".
+  dmf_sheet(sprintf("%s+%s merged ions", g_a, g_b), list(h1, h2), cols)
 }
 
 
 # ============================================================
-# 10. 写盘（EasyExcel 输出结构的等价物）
+# 10. Writing to disk (the equivalent of the EasyExcel output structure)
 # ============================================================
 
-#' Excel 工作表名清洗：<=31 字符、不含 [ ] : * ? / \ 、不重复
+#' Sanitise an Excel sheet name: <= 31 chars, no [ ] : * ? / \, and unique
 #'
-#' 组名较长时（例如 "Group A和Group B差异离子(Group A比Group B)"）原逻辑在
-#' addWorksheet 处直接报错中断整个导出，这里做一次清洗 + 去重。
+#' With long group names (for example "Group A+Group B merged diff. ions") the
+#' original logic throws inside addWorksheet and aborts the whole export, so a
+#' sanitise-and-deduplicate step is added here.
 dmf_sheet_name <- function(name, used = character(0)) {
   nm <- gsub("[\\[\\]:*?/\\\\]", "_", as.character(name))
   nm <- substr(nm, 1L, 31L)
@@ -1298,13 +1790,18 @@ dmf_sheet_name <- function(name, used = character(0)) {
   nm
 }
 
-#' 把 dmf_sheet 列表写成 xlsx
+#' Turn "%" into "pct" for file names (a literal % is awkward in shells and URLs)
+dmf_file_tag <- function(x) gsub("%", "pct", x, fixed = TRUE)
+
+#' Write a list of dmf_sheet objects to xlsx
 #'
-#' 表头行逐行写（保留数值/文本类型），数据块整块写：全数值列走矩阵通道，
-#' 混合类型列走 data.frame 通道。
-#' 注意：openxlsx::writeData() 不会把 "=" 开头的字符串当公式（写进 xlsx 是
-#' 共享字符串，没有 <f> 节点），要真公式必须用 writeFormula()。所以统计量
-#' （如 P 值）一律在 R 里算成数值再写，不要塞公式字符串。
+#' Header rows are written row by row (numeric/text types preserved) and each data
+#' block is written in one go: all-numeric columns take the matrix path, mixed
+#' columns take the data.frame path.
+#' Note: openxlsx::writeData() does not treat a string starting with "=" as a
+#' formula (it becomes a shared string with no <f> node); a real formula needs
+#' writeFormula(). So every statistic (the P value, for instance) is computed as a
+#' number in R and written as such, never as a formula string.
 dmf_write_sheets <- function(sheets, path) {
   wb <- openxlsx::createWorkbook()
   used <- character(0)
@@ -1341,10 +1838,11 @@ dmf_write_sheets <- function(sheets, path) {
 
 
 # ============================================================
-# 11. 主流程（IonCalculator.Process / p80CompareWith / mergeDiff）
+# 11. Main pipeline (IonCalculator.Process / p80CompareWith / mergeDiff)
 # ============================================================
 
-#' 补全配置：未在界面上暴露的参数取 default_config
+#' Complete the configuration: parameters not exposed in the UI come from
+#' default_config
 dmf_merge_config <- function(config = NULL) {
   base <- default_config
   if (!is.null(config)) {
@@ -1361,18 +1859,56 @@ dmf_merge_config <- function(config = NULL) {
             "relativeIntensityRange2", "relativeIntensityValue2",
             "countRange", "countValue")
   miss <- setdiff(need, names(base))
-  if (length(miss) > 0L) stop("配置缺少字段：", paste(miss, collapse = ", "))
+  if (length(miss) > 0L) stop("Configuration is missing fields: ",
+                              paste(miss, collapse = ", "))
+
+  # ---- Keep the 50% scoring table in step with the all-ion table -------------
+  # The original Java build carried a separate table for the 50% pass, and the R
+  # port reproduced that by shipping two identical sets of defaults. The moment a
+  # caller overrides only one side (the UI exposes the all-ion table, and the CLI
+  # accepts any subset of keys in --params), the two result sheets would silently
+  # be scored with different tables -- the same number would mean two things.
+  # So: whenever an all-ion table is supplied and its 50% counterpart is not,
+  # mirror it. Supplying both explicitly still wins, which is what reproducing a
+  # customised original run needs.
+  mirror <- c(intensityRange = "p50IntensityRange",
+              intensityValue = "p50IntensityValue",
+              countRange = "p50CountRange",
+              countValue = "p50CountValue",
+              relativeIntensitySplit = "p50RelativeIntensitySplit",
+              relativeIntensityRange1 = "p50RelativeIntensityRange1",
+              relativeIntensityValue1 = "p50RelativeIntensityValue1",
+              relativeIntensityRange2 = "p50RelativeIntensityRange2",
+              relativeIntensityValue2 = "p50RelativeIntensityValue2")
+  for (src in names(mirror)) {
+    dst <- mirror[[src]]
+    if (!is.null(config[[src]]) && is.null(config[[dst]])) base[[dst]] <- base[[src]]
+  }
+
+  # MatrixPick / ClusterRtTol decide whether the run matches the original Java
+  # output or the v1.0.4 defaults. Reject typos instead of letting a misspelt
+  # "first" fall through to the intensity-based rule.
+  if (!is.null(base$MatrixPick) && !base$MatrixPick %in% c("max", "first")) {
+    stop("MatrixPick must be \"max\" or \"first\", got: ", base$MatrixPick,
+         call. = FALSE)
+  }
+  if (!is.null(base$ErrorRangeUnit) && !base$ErrorRangeUnit %in% c("ppm", "Da")) {
+    stop("ErrorRangeUnit must be \"ppm\" or \"Da\", got: ", base$ErrorRangeUnit,
+         call. = FALSE)
+  }
   base
 }
 
-#' 处理一个分组：读取 → 建矩阵 → 50%/80% 筛选与唯一化 → 打分 → 同位素
+#' Process one group: read -> build the matrix -> 50%/80% filter and dedup ->
+#' score -> isotopes
 #'
-#' @param path 该组 Excel 路径
-#' @param group_name 组名（A组 / B组）
-#' @param cfg 已完成补全的配置
-#' @param verbose 是否打印进度
-#' @param progress 可选回调 function(frac, detail)，frac 为整轮流程的完成比例
-#' @param frac_from,frac_to 本组的进度区间
+#' @param path path to that group's Excel file
+#' @param group_name group name (Group A / Group B)
+#' @param cfg configuration already completed
+#' @param verbose whether to print progress
+#' @param progress optional callback function(frac, detail); frac is the completion
+#'   fraction of the whole run
+#' @param frac_from,frac_to progress interval of this group
 dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
                               progress = NULL, frac_from = 0, frac_to = 1) {
   step <- function(f, detail) {
@@ -1382,10 +1918,10 @@ dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
     if (verbose) message(sprintf("[%s] %s", group_name, detail))
   }
   t0 <- Sys.time()
-  step(0.02, "开始读取文件")
+  step(0.02, "Reading the data file")
   rd <- dmf_read_samples(path)
 
-  step(0.18, sprintf("开始初始化矩阵（%d 个离子 / %d 个样品）",
+  step(0.18, sprintf("Building the matrix (%d ions / %d samples)",
                      nrow(rd$ions), length(rd$sample_names)))
   pick_cfg <- cfg$MatrixPick
   if (is.null(pick_cfg) || !length(pick_cfg) || is.na(pick_cfg)) pick_cfg <- "first"
@@ -1393,49 +1929,52 @@ dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
   if (is.null(rt_tol) || !length(rt_tol) || !is.numeric(rt_tol) ||
       is.na(rt_tol) || rt_tol < 0) rt_tol <- 0
   ions <- dmf_create_matrix(rd$ions, length(rd$sample_names), cfg$ErrorRange,
-                            cfg$FloatCount, pick_cfg, rt_tol)
+                            cfg$FloatCount, pick_cfg, rt_tol,
+                            unit = cfg$ErrorRangeUnit)
 
   n_sample <- length(rd$sample_names)
-  # 50% 阈值：(int)(p50 * n) 截断；80% 阈值：(int)ceil(p80 * n)
+  # 50% threshold: (int)(p50 * n) truncated; 80% threshold: (int)ceil(p80 * n)
   thr50 <- as.integer(cfg$p50IonPercent * n_sample)
   thr80 <- as.integer(ceiling(cfg$p80IonPercent * n_sample))
   p80_str <- sprintf("%d%%", as.integer(cfg$p80IonPercent * 100))
   if (verbose) {
-    message(sprintf("[%s] 读取完成，样品数 %d，最少出现次数：%s = %d",
+    message(sprintf("[%s] read done, %d samples, minimum occurrence count: %s = %d",
                     group_name, n_sample, p80_str, thr80))
   }
 
   # ---- 50% ----
-  step(0.50, "筛选与唯一化 50% / 80% 离子")
+  step(0.50, "Filtering and deduplicating the 50% / 80% ions")
   idx50 <- which(ions$count >= thr50)
   idx50 <- idx50[dmf_sort_by_count(ions$count[idx50])]
-  idx50 <- dmf_distinct_ions(idx50, ions$rt_mz, cfg$ErrorRange)
+  idx50 <- dmf_distinct_ions(idx50, ions$rt_mz, cfg$ErrorRange,
+                             mz = ions$mz[idx50], unit = cfg$ErrorRangeUnit)
   p50_ions <- dmf_subset_ions(ions, idx50)
 
   # ---- 80% ----
   idx80 <- which(ions$count >= thr80)
   idx80 <- idx80[dmf_sort_by_count(ions$count[idx80])]
-  idx80 <- dmf_distinct_ions(idx80, ions$rt_mz, cfg$ErrorRange)
+  idx80 <- dmf_distinct_ions(idx80, ions$rt_mz, cfg$ErrorRange,
+                             mz = ions$mz[idx80], unit = cfg$ErrorRangeUnit)
   p80_ions <- dmf_subset_ions(ions, idx80)
 
   if (verbose) {
-    message(sprintf("[%s] p50 离子数 %d，p80 离子数 %d", group_name,
+    message(sprintf("[%s] %d p50 ions, %d p80 ions", group_name,
                     length(idx50), length(idx80)))
   }
 
-  # ---- 打分 ----
-  step(0.62, "50% 离子单独打分")
+  # ---- Scoring ----
+  step(0.62, "Scoring the 50% ions individually")
   p50_score <- dmf_score_p50(idx50, ions, cfg$ErrorRange, cfg)
-  step(0.72, "全离子两维度打分")
+  step(0.72, "Scoring all ions on both dimensions")
   ion_score <- dmf_score_all_ions(ions, cfg$ErrorRange, cfg)
-  # 汇总表里的"平均得分"= 同一离子在 rtMz 维度的平均分
+  # "Mean score" in the summary is the same ion's mean score on the rtMz dimension
   p50_score$avg_score_by_rt <- ion_score$rt_mz_avg[idx50]
 
-  # ---- 同位素 ----
-  step(0.88, "同位素 M+1 / M+2 / M+3 查找")
+  # ---- Isotopes ----
+  step(0.88, "Isotope search for M+1 / M+2 / M+3")
   iso <- dmf_calc_isotopes(ions, cfg$ErrorRange, cfg)
 
-  step(1, sprintf("处理完成，耗时 %.1f 秒",
+  step(1, sprintf("Group processed, %.1f s elapsed",
                   as.numeric(difftime(Sys.time(), t0, units = "secs"))))
 
   list(
@@ -1454,7 +1993,7 @@ dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
   )
 }
 
-#' 组内三张表（分布初筛 / 50% / 80%）
+#' The three within-group sheets (distribution / 50% / 80%)
 .dmf_sheet_p50_p80_3 <- function(g, p80_str, ions, idx50, idx80, sample_names) {
   n_s <- length(sample_names)
   cols_base <- c(
@@ -1465,39 +2004,41 @@ dmf_process_group <- function(path, group_name, cfg, verbose = TRUE,
     list(count = ions$count, avg = ions$avg)
   )
   list(
-    dmf_sheet(paste0(g, "离子分布初筛"),
+    dmf_sheet(paste0(g, " ion distribution"),
               list(dmf_hdr(list("sample", "RT", "RT&m/z", "m/z", "-"),
                            as.list(as.numeric(sample_names)),
-                           list("计数", "平均强度"))),
+                           list("Count", "Mean intensity"))),
               cols_base),
-    dmf_sheet(paste0(g, "50%分布频率离子"),
-              list(c("Sample (No)", "RT", "RT&m/z", "m/z", "平均离子强度", "离子计数")),
+    dmf_sheet(paste0(g, " 50% ions by frequency"),
+              list(c("Sample (No)", "RT", "RT&m/z", "m/z", "Mean intensity",
+                     "Ion count")),
               dmf_cols_ion_table(ions, idx50)),
-    dmf_sheet(paste0(g, p80_str, "分布频率离子"),
-              list(c("Sample (No)", "RT", "RT&m/z", "m/z", "平均离子强度", "离子计数")),
+    dmf_sheet(paste0(g, " ", p80_str, " ions by frequency"),
+              list(c("Sample (No)", "RT", "RT&m/z", "m/z", "Mean intensity",
+                     "Ion count")),
               dmf_cols_ion_table(ions, idx80))
   )
 }
 
-#' 跑完整流程并写出全部结果文件
+#' Run the whole pipeline and write every result file
 #'
-#' 输出（与原版文件名、工作表名一致）：
-#'   <A>-筛选50%和80%离子.xlsx        （3 表）
-#'   <A>-离子打分.xlsx               （3 表）
-#'   <A>-同位素离子查找.xlsx          （1 表）
-#'   <A>-80%离子与<B>总离子比对分析.xlsx（1 表）
-#'   <A>-<B>差异离子筛选汇总.xlsx      （2 表）
-#'   B 组同上
+#' Output (the original file and sheet naming, now in English):
+#'   <A>_filtered_50pct_and_80pct_ions.xlsx   (3 sheets)
+#'   <A>_ion_scores.xlsx                     (3 sheets)
+#'   <A>_isotope_search.xlsx                 (1 sheet)
+#'   <A>_80pct_ions_vs_<B>_all_ions.xlsx     (1 sheet)
+#'   <A>_vs_<B>_differential_ions.xlsx       (2-3 sheets: A view, B view, merged)
+#'   group B likewise
 #'
-#' @param file_a,file_b 两个分组的 Excel 路径
-#' @param output_dir 输出目录（不存在会自动创建）
-#' @param config 配置，缺省用 default_config
-#' @param group_names 组名，默认 c("A组","B组")
-#' @param verbose 是否打印进度
-#' @param progress 可选回调 function(frac, detail)
+#' @param file_a,file_b paths to the two groups' Excel files
+#' @param output_dir output directory (created when missing)
+#' @param config configuration; default_config when omitted
+#' @param group_names group names, default c("Group A", "Group B")
+#' @param verbose whether to print progress
+#' @param progress optional callback function(frac, detail)
 #' @return list(groups, diff, files, p80_str)
 dmetfinder_run <- function(file_a, file_b, output_dir, config = NULL,
-                           group_names = c("A组", "B组"), verbose = TRUE,
+                           group_names = c("Group A", "Group B"), verbose = TRUE,
                            progress = NULL) {
   cfg <- dmf_merge_config(config)
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1508,17 +2049,17 @@ dmetfinder_run <- function(file_a, file_b, output_dir, config = NULL,
   ga <- dmf_process_group(file_a, g_a, cfg, verbose, progress, 0, 0.42)
   gb <- dmf_process_group(file_b, g_b, cfg, verbose, progress, 0.42, 0.84)
 
-  # ---- 跨组比对：80% 离子 vs 另一组总离子 ----
-  step(0.86, "跨组比对：80% 离子 vs 另一组总离子")
+  # ---- Cross-group comparison: 80% ions vs the other group's total ions ----
+  step(0.86, "Cross-group comparison: 80% ions vs the other group's total ions")
   cmp_ab <- dmf_compare_p80(ga$p80_idx, ga$ions, list(ions = gb$ions, sample_names = gb$sample_names), cfg)
-  step(0.88, "跨组比对（反向）")
+  step(0.88, "Cross-group comparison (reverse)")
   cmp_ba <- dmf_compare_p80(gb$p80_idx, gb$ions, list(ions = ga$ions, sample_names = ga$sample_names), cfg)
 
   sheet_ab <- .dmf_sheet_p80_compare(g_a, ga$p80_str, g_b, cmp_ab, ga$ions, list(sample_names = gb$sample_names, ions = gb$ions))
   sheet_ba <- .dmf_sheet_p80_compare(g_b, gb$p80_str, g_a, cmp_ba, gb$ions, list(sample_names = ga$sample_names, ions = ga$ions))
 
-  # ---- 差异离子汇总 ----
-  step(0.90, "生成差异离子汇总")
+  # ---- Differential ion summary ----
+  step(0.90, "Building the differential ion summary")
   diff_ab <- dmf_merge_diff(cmp_ab, ga$ions, ga$p50_ions, ga$p50_score, ga$isotopes,
                             list(ions = gb$ions, sample_names = gb$sample_names))
   diff_ba <- dmf_merge_diff(cmp_ba, gb$ions, gb$p50_ions, gb$p50_score, gb$isotopes,
@@ -1527,36 +2068,51 @@ dmetfinder_run <- function(file_a, file_b, output_dir, config = NULL,
   sheet_diff_ab <- .dmf_sheet_diff(g_a, g_b, ga$p80_str, diff_ab, ga$sample_names, gb$sample_names)
   sheet_diff_ba <- .dmf_sheet_diff(g_b, g_a, gb$p80_str, diff_ba, gb$sample_names, ga$sample_names)
 
-  # ---- 写盘 ----
+  # ---- Merged table: union of the two tables above (one row per ion, both
+  # sides' intensities side by side)
+  union_diff <- dmf_union_diff(diff_ab, cmp_ab, diff_ba, cmp_ba, ga, gb, cfg)
+  sheet_diff_union <- if (is.null(union_diff)) NULL else
+    .dmf_sheet_diff_merged(g_a, g_b, union_diff, ga$sample_names, gb$sample_names)
+  diff_sheets <- list(sheet_diff_ab, sheet_diff_ba)
+  if (!is.null(sheet_diff_union)) diff_sheets <- c(diff_sheets, list(sheet_diff_union))
+
+  # ---- Write to disk ----
   files <- character(0)
   n_out <- 9L
   w <- function(sheets, fname) {
     p <- file.path(output_dir, fname)
     dmf_write_sheets(sheets, p)
     files <<- c(files, p)
-    if (verbose) message("已写出：", fname)
-    step(0.92 + 0.08 * length(files) / n_out, paste("写出", fname))
+    if (verbose) message("Wrote: ", fname)
+    step(0.92 + 0.08 * length(files) / n_out, paste("Writing", fname))
     p
   }
-  w(ga$sheets[1:3], sprintf("%s-筛选50%%和%s离子.xlsx", g_a, ga$p80_str))
-  w(ga$sheets[4:6], sprintf("%s-离子打分.xlsx", g_a))
-  w(ga$sheets[7],   sprintf("%s-同位素离子查找.xlsx", g_a))
-  w(list(sheet_ab), sprintf("%s-%s离子与%s总离子比对分析.xlsx", g_a, ga$p80_str, g_b))
-  w(list(sheet_diff_ab, sheet_diff_ba), sprintf("%s-%s差异离子筛选汇总.xlsx", g_a, g_b))
+  w(ga$sheets[1:3], sprintf("%s_filtered_50pct_and_%s_ions.xlsx",
+                            g_a, dmf_file_tag(ga$p80_str)))
+  w(ga$sheets[4:6], sprintf("%s_ion_scores.xlsx", g_a))
+  w(ga$sheets[7],   sprintf("%s_isotope_search.xlsx", g_a))
+  w(list(sheet_ab), sprintf("%s_%s_ions_vs_%s_all_ions.xlsx",
+                            g_a, dmf_file_tag(ga$p80_str), g_b))
+  # Differential ion summary: 2 group-view sheets + 1 merged union sheet
+  # (the merged sheet is omitted when there are no ions)
+  w(diff_sheets, sprintf("%s_vs_%s_differential_ions.xlsx", g_a, g_b))
 
-  w(gb$sheets[1:3], sprintf("%s-筛选50%%和%s离子.xlsx", g_b, gb$p80_str))
-  w(gb$sheets[4:6], sprintf("%s-离子打分.xlsx", g_b))
-  w(gb$sheets[7],   sprintf("%s-同位素离子查找.xlsx", g_b))
-  w(list(sheet_ba), sprintf("%s-%s离子与%s总离子比对分析.xlsx", g_b, gb$p80_str, g_a))
+  w(gb$sheets[1:3], sprintf("%s_filtered_50pct_and_%s_ions.xlsx",
+                            g_b, dmf_file_tag(gb$p80_str)))
+  w(gb$sheets[4:6], sprintf("%s_ion_scores.xlsx", g_b))
+  w(gb$sheets[7],   sprintf("%s_isotope_search.xlsx", g_b))
+  w(list(sheet_ba), sprintf("%s_%s_ions_vs_%s_all_ions.xlsx",
+                            g_b, dmf_file_tag(gb$p80_str), g_a))
 
   list(
     groups = list(A = ga, B = gb),
-    diff = list(ab = diff_ab, ba = diff_ba),
+    diff = list(ab = diff_ab, ba = diff_ba, union = union_diff),
     compare = list(ab = cmp_ab, ba = cmp_ba),
     files = files,
     p80_str = ga$p80_str,
     sheets = list(A = ga$sheets, B = gb$sheets,
                   compare_ab = sheet_ab, compare_ba = sheet_ba,
-                  diff_ab = sheet_diff_ab, diff_ba = sheet_diff_ba)
+                  diff_ab = sheet_diff_ab, diff_ba = sheet_diff_ba,
+                  diff_union = sheet_diff_union)
   )
 }

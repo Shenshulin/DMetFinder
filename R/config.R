@@ -2,8 +2,25 @@
 # DMetFinder Default Configuration Parameters (corresponds to DMetFinder.app.cfg.json)
 # ============================================================
 default_config <- list(
-  ErrorRange = 0.002,           # Ion matching error range
-  ErrorRangeInGroups = 0.003,   # Within-group matching error range
+  # ---- Unit of the mass tolerance ----
+  # "ppm" (default): the tolerance is converted to Da per ion from that ion's own
+  #   m/z, tol_i = mz_i * ppm * 1e-6. The same ppm value maps to a different
+  #   absolute window width at different m/z, which is what mass accuracy
+  #   actually behaves like (absolute error grows with m/z).
+  # "Da": a fixed absolute tolerance, i.e. the convention of the original Java
+  #   implementation. Reproducing old results, or comparing cell by cell against
+  #   another implementation, requires switching to this unit together with
+  #   ErrorRange = 0.002 / ErrorRangeInGroups = 0.003.
+  #
+  # Why the default had to change: on the demo data the old fixed 0.002 Da is
+  #   equivalent to 19 ppm at the low-m/z end (p1 = 105) -- far too wide, it
+  #   merges neighbouring but distinct ions; and to only 2 ppm at the high-m/z
+  #   end (p95 = 990) -- far too narrow, so one feature breaks apart as soon as
+  #   its mass drifts. With ppm both ends agree and the criterion no longer
+  #   shifts systematically with m/z.
+  ErrorRangeUnit = "ppm",
+  ErrorRange = 5,               # Ion matching error range (unit: see above)
+  ErrorRangeInGroups = 10,      # Within-group matching error range (unit: see above)
   FloatCount = 7,               # Number of decimal places for floating point numbers
   NullCellValue = 0,            # Null cell value
   countRange = c(1, 3, 5, 10),  # Count scoring ranges
@@ -21,8 +38,9 @@ default_config <- list(
   relativeIntensitySplit = 5,
   relativeIntensityValue1 = c(0.5, 1, 2, 3, 5, 10),
   relativeIntensityValue2 = c(1, 2, 3, 5, 10),
-  # 50% 离子打分是原版独立的一套打分表（p50IntensityRange… 等），
-  # 默认值与全离子那套完全相同，界面上未单独暴露时沿用这里的值。
+  # 50% ion scoring uses its own score table in the original implementation
+  # (p50IntensityRange etc.). The defaults are identical to the all-ion table,
+  # and these values apply whenever the UI does not expose them separately.
   p50IntensityRange = c(0, 5000, 10000, 50000, 100000, 500000, 1000000),
   p50IntensityValue = c(1, 2, 5, 6, 8, 9, 10),
   p50RelativeIntensitySplit = 5,
@@ -32,17 +50,33 @@ default_config <- list(
   p50RelativeIntensityValue2 = c(1, 2, 3, 5, 10),
   p50CountRange = c(1, 3, 5, 10),
   p50CountValue = c(10, 3, 2, 1),
-  # 同一离子在自己窗口（±ErrorRange，同一 RT 桶）里对同一样品命中多个质心时取哪一个：
-  #   "max"   取强度最大者（默认）。一条特征被切成多支 m/z 时选支不再抖动，
-  #           组内 CV 与定量准确率都明显更好（TOF 基准 QAR 45.2% -> 78.9%）；
-  #   "first" 取原始下标最小者，即原版 Java 的「同一样品先到先得」，复现原版用。
+  # When the same ion hits more than one centroid for the same sample inside its
+  # own window (+/- ErrorRange, same RT bin), which one to take:
+  #   "max"   take the most intense one (default). When one feature is split into
+  #           several m/z branches the chosen branch stops flickering, and both
+  #           within-group CV and quantitative accuracy improve markedly
+  #           (TOF benchmark QAR 45.2% -> 78.9%);
+  #   "first" take the smallest original row index, i.e. the original Java rule
+  #           of "first come, first served per sample". Use this to reproduce
+  #           the original implementation.
   MatrixPick = "max",
-  # 组内匹配时额外施加的时间容差（分钟）。
-  #   0   = 只用原版键「同一整数分钟桶 + ±ErrorRange」；
-  #   >0  = 改为「±ErrorRange 且 apex RT 相差不超过该值」，需要 Ms1Geter
-  #        输出 RT_apex 列。1 min 桶会把跨桶 / 多支的同一条离子拆开，
-  #        放行后这部分会被重新归到一起，组内 CV 与定量准确率显著变好。
-  ClusterRtTol = 0.3
+  # Extra retention-time tolerance applied during within-group matching (minutes).
+  #   0   = use only the original key "same integer minute bin + +/- ErrorRange";
+  #   >0  = use "+/- ErrorRange AND apex RT differs by no more than this value",
+  #         which requires the RT_apex column written by Ms1Geter. A 1-minute bin
+  #         splits one ion that crosses bin boundaries or has several branches;
+  #         letting those through re-merges them, and within-group CV and
+  #         quantitative accuracy improve substantially.
+  ClusterRtTol = 0.3,
+  # ---- Verdict thresholds for the "merged" differential-ion table ----
+  # (only affect the third merged sheet, no other output)
+  # Rules for the Verdict column of the merged table:
+  #   ion count of one group = 0                              -> A only / B only
+  #   P < PValueThreshold and fold >= FoldChangeThreshold      -> Higher in A
+  #   P < PValueThreshold and fold <= 1/FoldChangeThreshold    -> Higher in B
+  #   otherwise                                                -> No change
+  FoldChangeThreshold = 2,
+  PValueThreshold = 0.05
 )
 
 # ============================================================

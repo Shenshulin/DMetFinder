@@ -4,6 +4,20 @@
 > 的是同一批计算函数，结果等价（逐单元格一致，见 `tests/agent/test_csv_fidelity.R`）。
 > 峰质量（第三页）仍在开发，**未**接入本命令行。
 
+> **表名只有一个真源。** sheet 名由 `R/dmetfinder_functions.R` 的 `dmf_sheet()`
+> 决定，`cli/lib/csv_out.R` 的 `csv_expected_names()` 逐字跟随并断言。改核心表名
+> 必须同步改那里，否则 CLI 会在写盘阶段中止 —— 计算全部跑完，却一个 CSV 都不落盘
+> （2026-11-11 英文化时就是这样断的）。
+>
+> **回归入口：**
+> ```bat
+> Rscript tests/agent/test_cli_app_parity.R .
+> ```
+> 它从 `server/dmetfinder_server.R` 里把参数组装表达式原样解析出来执行，检查四件事：
+> 面板默认值合并后等于 `default_config`；`default_config` 里每个会改变结果的键都能从
+> 面板设置到；`MatrixPick` / `ClusterRtTol` 真的传到了 `dmf_create_matrix()`；
+> 同一输入两条入口产出的 19 张表逐格相同。四项全过才算「CLI 与界面是同一套分析」。
+
 ---
 
 ## 1. 先跑自检
@@ -25,7 +39,7 @@ cli\run-dmf.bat doctor
 :: 看输入文件结构，不跑分析
 cli\run-dmf.bat inspect --input demo_data\groupA.xlsx --out out\inspect
 
-:: 跑 A/B 差异筛选，产出 18 个 CSV
+:: 跑 A/B 差异筛选，产出 19 个 CSV
 cli\run-dmf.bat diff --a demo_data\groupA.xlsx --b demo_data\groupB.xlsx --out out\run1
 
 :: 加 --json 拿机器可读结果
@@ -47,28 +61,71 @@ Windows 下建议始终用 `cli\run-dmf.bat`，它已处理三个坑：`LOCALAPP
 out/run1/
 ├── run.json          # 信封：版本、commit、参数哈希、每个文件的 sha256
 ├── schema.csv        # 列字典：每一列的名字、内部字段名、原始多层表头
-├── tables/           # 18 个 CSV，一个 sheet 一个文件
+├── tables/           # 19 个 CSV，一个 sheet 一个文件
 └── xlsx/             # 仅当加了 --xlsx
 ```
 
-### 18 个 CSV 的编号与来源
+### 19 个 CSV 的编号与来源
 
-| 文件 | 原 xlsx | 原 sheet |
+| 文件 | 原 xlsx | sheet |
 |---|---|---|
-| `01_A组离子分布初筛.csv` | A组-筛选50%和A组80%离子 | A组离子分布初筛 |
-| `02_A组50%分布频率离子.csv` | 同上 | A组50%分布频率离子 |
-| `03_A组80%分布频率离子.csv` | 同上 | A组80%分布频率离子 |
-| `04_A组50%离子单独打分.csv` | A组-离子打分 | A组50%离子单独打分 |
-| `05_A组总离子平均得分.csv` | 同上 | A组总离子平均得分 |
-| `06_A组离子打分汇总.csv` | 同上 | A组离子打分汇总 |
-| `07_A组同位素离子查找.csv` | A组-同位素离子查找 | A组同位素离子查找 |
-| `08_A组80%离子和B组比对.csv` | A组-A组80%离子与B组总离子比对分析 | A组80%离子和B组比对 |
-| `09_A组和B组差异离子(A组比B组).csv` | A组-B组差异离子筛选汇总 | A组和B组差异离子(A组比B组) |
-| `10_B组和A组差异离子(B组比A组).csv` | 同上 | B组和A组差异离子(B组比A组) |
-| `11`–`17` | B 组对应三个 xlsx | 同 A 组命名规则 |
-| `18_B组80%离子和A组比对.csv` | B组-A组80%离子与B组总离子比对分析 | B组80%离子和A组比对 |
+| `01_Group A ion distribution.csv` | Group A_filtered_50pct_and_80pct_ions | Group A ion distribution |
+| `02_Group A 50% ions by frequency.csv` | 同上 | Group A 50% ions by frequency |
+| `03_Group A 80% ions by frequency.csv` | 同上 | Group A 80% ions by frequency |
+| `04_Group A 50% ion scores.csv` | Group A_ion_scores | Group A 50% ion scores |
+| `05_Group A all-ion scores.csv` | 同上 | Group A all-ion scores |
+| `06_Group A score summary.csv` | 同上 | Group A score summary |
+| `07_Group A isotope search.csv` | Group A_isotope_search | Group A isotope search |
+| `08_Group A 80% ions vs Group B.csv` | Group A_80pct_ions_vs_Group B_all_ions | Group A 80% ions vs Group B |
+| `09_Group A vs Group B diff. ions.csv` | Group A_vs_Group B_differential_ions | Group A vs Group B diff. ions |
+| `10_Group B vs Group A diff. ions.csv` | 同上 | Group B vs Group A diff. ions |
+| `11_Group A+Group B merged ions.csv` | 同上 | Group A+Group B merged ions |
+| `12`–`18` | B 组对应的三个 xlsx | 同 A 组命名规则，组名换成 Group B |
+| `19_Group B 80% ions vs Group A.csv` | Group B_80pct_ions_vs_Group A_all_ions | Group B 80% ions vs Group A |
+
+> 上面的 `Group A` / `Group B` 是**组名占位**，取自 `--groups`（默认
+> `Group A,Group B`）。改组名，文件名与 sheet 名同步改。
+> 文件里的 `%` 一律写作 `pct`（`dmf_file_tag()`），因为 `%` 在 shell 与 URL 里有歧义。
+> sheet 名上限 31 字符，超了会被 `dmf_sheet_name()` **静默截断**，组名过长时要注意。
+
+> `11_…merged ions` 是把 09、10 两张表合成并集的结果：每行一个离子，两侧强度并排，
+> 并给出 `Verdict` 列（`Higher in A` / `Higher in B` / `A only` / `B only` / `No change`）。
+> 判定阈值取 `FoldChangeThreshold`（默认 2 倍）与 `PValueThreshold`（默认 0.05），
+> 改 `R/config.R` 即可调整。两组都没有离子时该表不生成，编号会整体前移 1。
 
 编号按原程序的写出顺序固定，不随输入变化。论文补充材料可直接引用文件名。
+
+### 整合表（`11`）的口径
+
+09 与 10 各自以一组为行集合，同一离子在两表里各出现一次、另一侧可能是 0。
+11 把两者合成一张并集表，每行一个离子：
+
+| 情形 | 来源 | 行从哪来 |
+|---|---|---|
+| A 组 80% 离子且匹配到 B 组 80% 离子 | `Shared` | 09 |
+| A 组 80% 离子但 B 组没有对应 80% 离子 | `A 80% only` | 09 |
+| B 组 80% 离子且未作为任何 A 组离子的匹配对象 | `B 80% only` | 10 |
+
+因此 `Shared + A 80% only = A 组 80% 离子数`。
+
+`Verdict` 列的取值与先后顺序：
+
+1. B 组离子计数 = 0 → `A only`
+2. A 组离子计数 = 0 → `B only`
+3. `P < PValueThreshold` 且 倍数 ≥ `FoldChangeThreshold` → `Higher in A`
+4. `P < PValueThreshold` 且 倍数 ≤ 1/`FoldChangeThreshold` → `Higher in B`
+5. 其余 → `No change`
+
+倍数 = A 组平均强度 / B 组平均强度；任一侧离子计数为 0 时**记 0 而不是空**，
+与 09 / 10 两张表一致（原版 `NullCellValue = 0`）。所以看到 0 时方向要看「判定」列，
+不能只看倍数。
+
+「B组配对共用离子数」= 该行匹配到的 B 组离子被几个 A 组离子共用。组间匹配是
+本组驱动的、不保证一对一：多个 A 组离子落在同一个 B 组离子上时，该 B 组离子会在
+多行里以相同强度重复出现，**不能当作独立重复计数**。demo 数据实测：共有 9776 行
+对应 9751 个不同的 B 组离子（25 个被两个 A 组离子共用），标记为 > 1 的共 54 行。
+
+整合表不含 `M+1/M+2/M+3`（同位素判定仍看 02/07 等分组表），也没有 20 列的分隔空列。
 
 ---
 
@@ -132,8 +189,28 @@ column_name, internal_key, header_r1, header_r2, header_r3, dropped
 改参数：写一个 JSON，键名与 `R/config.R` 的 `default_config` 一致，用 `--params` 传入。
 
 ```json
-{ "ErrorRange": 0.002, "p50IonPercent": 0.5, "countRange": [1, 3, 5, 10] }
+{ "ErrorRangeUnit": "ppm", "ErrorRange": 5, "p50IonPercent": 0.5, "countRange": [1, 3, 5, 10] }
 ```
+
+### `ErrorRangeUnit`（默认 `"ppm"`，容差单位）
+
+`ErrorRange` 与 `ErrorRangeInGroups` 的单位由它决定，两个参数必须一起看：
+
+- `"ppm"`（默认）：容差按每个离子自己的 m/z 换算，
+  `tol_i = mz_i × ppm × 1e-6`。默认 `ErrorRange = 5`、`ErrorRangeInGroups = 10`。
+- `"Da"`：固定绝对容差，即原版 Java 的口径。复现旧结果、或与其他实现逐格对照时必须切过来，
+  并配上 `ErrorRange = 0.002`、`ErrorRangeInGroups = 0.003`。
+
+```json
+{ "ErrorRangeUnit": "Da", "ErrorRange": 0.002, "ErrorRangeInGroups": 0.003 }
+```
+
+为什么默认是 ppm：固定 0.002 Da 在 demo 数据上，低 m/z 端（≈105）相当于 19 ppm，
+过宽、容易把相邻的不同离子并掉；高 m/z 端（≈990）只有 2 ppm，过窄、同一条特征因质量漂移
+就会断开。换成 ppm 后"匹配得多宽"在所有 m/z 上一致，判据不再随 m/z 系统性偏移。
+
+**注意**：两套单位没有换算关系（0.002 Da 当成 0.002 ppm 用会窄到什么都匹配不上）。
+界面上切换单位时两个数值会被重置成该单位的默认值，脚本里改单位要自己把数值一起改。
 
 ### `MatrixPick`（v1.0.3 起，默认 `"max"`）
 
@@ -215,7 +292,7 @@ MSGeter 三条命令不复制上游算法，而是 `source()` 三个 `shiny_app/
 `MANIFEST.txt` 记录每个文件的字节数与 sha256；校验方法见文件内说明。
 
 **已验证**：把 zip 解压到无关目录后，`setup.R --check-only` 全绿，
-`diff` 产出的 18 个 CSV 与项目内运行结果**逐字节相同**，`run.json` 的
+`diff` 产出的 19 个 CSV 与项目内运行结果**逐字节相同**，`run.json` 的
 `n_rows_a / n_rows_b / n_diff_ab / n_diff_ba` 完全一致。
 
 ---

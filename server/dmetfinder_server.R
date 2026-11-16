@@ -1,8 +1,9 @@
 # ============================================================
 # DMetFinder Server
 # ------------------------------------------------------------
-# 分析主流程在 R/dmetfinder_functions.R 的 dmetfinder_run()，
-# 这里只负责：文件读取与预览、参数装配、进度、结果预览与打包下载。
+# The analysis pipeline itself lives in dmetfinder_run() in
+# R/dmetfinder_functions.R. This file only handles: file reading and preview,
+# parameter assembly, progress, result preview and the packaged download.
 # ============================================================
 
 dmetfinder_server <- function(input, output, session) {
@@ -14,28 +15,43 @@ dmetfinder_server <- function(input, output, session) {
     status = NULL
   )
 
-  # ---------- 参数解析 ----------
+  # ---------- Parameter parsing ----------
   parse_num <- function(txt) {
     if (is.null(txt) || !nzchar(txt)) return(NULL)
     v <- suppressWarnings(as.numeric(trimws(strsplit(txt, ",")[[1]])))
     v[!is.na(v)]
   }
 
+  # Switching the tolerance unit resets both numbers to the customary values for
+  # that unit. The two scales have no conversion relationship (using 0.002 Da as
+  # 0.002 ppm would be so narrow that nothing matches), so instead of converting
+  # automatically we just supply the default, which keeps a user from carrying
+  # the old number into the new unit without noticing.
+  observeEvent(input$ErrorRangeUnit, {
+    if (identical(input$ErrorRangeUnit, "Da")) {
+      updateNumericInput(session, "ErrorRange", value = 0.002)
+      updateNumericInput(session, "ErrorRangeInGroups", value = 0.003)
+    } else {
+      updateNumericInput(session, "ErrorRange", value = 5)
+      updateNumericInput(session, "ErrorRangeInGroups", value = 10)
+    }
+  }, ignoreInit = TRUE)
+
   read_group <- function(file, group_label) {
     tryCatch({
-      withProgress(message = sprintf("读取 %s 数据…", group_label), {
+      withProgress(message = sprintf("Reading %s data...", group_label), {
         rd <- dmf_read_samples(file$datapath)
       })
       list(ok = TRUE, data = rd,
-           msg = sprintf("读取成功：%d 个样品，%s 条离子记录（读取阶段未做合并）",
+           msg = sprintf("Loaded: %d samples, %s ion records (no merging at this stage)",
                          length(rd$sample_names),
                          format(nrow(rd$ions), big.mark = ",")))
     }, error = function(e) {
-      list(ok = FALSE, data = NULL, msg = paste("读取失败：", e$message))
+      list(ok = FALSE, data = NULL, msg = paste("Read failed:", e$message))
     })
   }
 
-  # ---------- 数据读取 ----------
+  # ---------- Data reading ----------
   observeEvent(input$fileA, {
     req(input$fileA)
     r <- read_group(input$fileA, "Group A")
@@ -79,15 +95,18 @@ dmetfinder_server <- function(input, output, session) {
     datatable(preview_ions(values$dataB), options = list(scrollX = TRUE, pageLength = 10))
   })
 
-  # ---------- 执行分析 ----------
+  # ---------- Run the analysis ----------
   observeEvent(input$runAnalysis, {
     req(input$fileA, input$fileB)
 
     config <- list(
+      ErrorRangeUnit = input$ErrorRangeUnit,
       ErrorRange = input$ErrorRange,
       ErrorRangeInGroups = input$ErrorRangeInGroups,
       FloatCount = as.integer(input$FloatCount),
       mergeRows = isTRUE(input$mergeRows),
+      MatrixPick = input$MatrixPick,
+      ClusterRtTol = input$ClusterRtTol,
       m1 = input$m1, m2 = input$m2, m3 = input$m3,
       p50IonPercent = input$p50IonPercent,
       p80IonPercent = input$p80IonPercent,
@@ -96,13 +115,18 @@ dmetfinder_server <- function(input, output, session) {
       countRange = parse_num(input$countRange),
       countValue = parse_num(input$countValue),
       relativeIntensityRange1 = parse_num(input$relIntensityRange1),
-      relativeIntensityValue1 = parse_num(input$relIntensityValue1)
+      relativeIntensityValue1 = parse_num(input$relIntensityValue1),
+      relativeIntensitySplit = as.integer(input$relIntensitySplit),
+      relativeIntensityRange2 = parse_num(input$relIntensityRange2),
+      relativeIntensityValue2 = parse_num(input$relIntensityValue2),
+      FoldChangeThreshold = input$FoldChangeThreshold,
+      PValueThreshold = input$PValueThreshold
     )
 
     outdir <- file.path(tempdir(), paste0("dmetfinder_out_", format(Sys.time(), "%Y%m%d%H%M%S")))
 
     tryCatch({
-      withProgress(message = "分析中…", value = 0, {
+      withProgress(message = "Analysing...", value = 0, {
         values$run <- dmetfinder_run(
           input$fileA$datapath,
           input$fileB$datapath,
@@ -114,18 +138,18 @@ dmetfinder_server <- function(input, output, session) {
       values$status <- "success"
       output$run_status <- renderUI({
         div(class = "status-box status-success", icon("check-circle"),
-            "分析完成，可在 Results 标签查看与下载结果。")
+            "Analysis finished. Open the Results tab to inspect and download the output.")
       })
     }, error = function(e) {
       values$status <- "error"
       output$run_status <- renderUI({
         div(class = "status-box status-error", icon("exclamation-circle"),
-            paste("分析失败：", e$message))
+            paste("Analysis failed:", e$message))
       })
     })
   })
 
-  # ---------- 结果展示 ----------
+  # ---------- Result display ----------
   output$result_files <- renderUI({
     req(values$run)
     tags$ul(class = "file-list",
@@ -133,7 +157,7 @@ dmetfinder_server <- function(input, output, session) {
               tags$li(icon("file-excel"), f)))
   })
 
-  # 结果表 -> 预览用 data.frame（超过 500 行只预览前 500 行）
+  # Result sheet -> data.frame for preview (only the first 500 rows beyond that)
   sheet_df <- function(sh, limit = 500L) {
     req(sh)
     cols <- sh$cols
@@ -158,6 +182,7 @@ dmetfinder_server <- function(input, output, session) {
       isoA    = sheet_df(res$groups$A$sheets[[7]]),
       cmpA    = sheet_df(res$sheets$compare_ab),
       diff    = sheet_df(res$sheets$diff_ab),
+      diffunion = sheet_df(res$sheets$diff_union),
       filterB = sheet_df(res$groups$B$sheets[[2]]),
       scoreB  = sheet_df(res$groups$B$sheets[[6]]),
       isoB    = sheet_df(res$groups$B$sheets[[7]]),
@@ -177,12 +202,13 @@ dmetfinder_server <- function(input, output, session) {
   output$result_isoA    <- render_result("isoA")
   output$result_compareA <- render_result("cmpA")
   output$result_diff    <- render_result("diff")
+  output$result_diff_union <- render_result("diffunion")
   output$result_filterB <- render_result("filterB")
   output$result_scoreB  <- render_result("scoreB")
   output$result_isoB    <- render_result("isoB")
   output$result_compareB <- render_result("cmpB")
 
-  # ---------- 打包下载 ----------
+  # ---------- Packaged download ----------
   output$downloadAll <- downloadHandler(
     filename = function() {
       paste0("DMetFinder_results_", format(Sys.Date(), "%Y%m%d"), ".zip")

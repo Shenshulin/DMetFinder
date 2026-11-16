@@ -6,12 +6,14 @@
 # All input and output ids are unchanged.
 # ============================================================
 
-# 把数值向量渲染成 "a,b,c" 形式的默认值文本。
+# Render a numeric vector as a default-value string of the form "a,b,c".
 #
-# 直接用 paste(x, collapse = ",") 会走 as.character()，1e5 之类的值会被
-# 显示成 "1e+05"，界面上看似科学计数法、容易让人怀疑参数被改过。
-# 这里逐元素用定点表示（不出现指数），并去掉多余的尾随零。
-# digits = 15 是为了避免 1234567.891 被默认的 7 位有效数字截断。
+# A plain paste(x, collapse = ",") goes through as.character(), so values such
+# as 1e5 come out as "1e+05": it looks like scientific notation in the UI and
+# makes users suspect the parameter was modified. Here every element is written
+# in fixed notation (no exponent) with redundant trailing zeros dropped.
+# digits = 15 keeps 1234567.891 from being cut off at the default 7 significant
+# digits.
 dmf_numlist <- function(x) {
   x <- as.numeric(x)
   out <- vapply(x, function(v) {
@@ -77,13 +79,40 @@ dmetfinder_ui <- fluidPage(
       fluidRow(
         column(6,
           card_panel("Matching Parameters", "gears",
+            radioButtons("ErrorRangeUnit", "Error Range Unit",
+                        choices = c("ppm (scales with m/z)" = "ppm",
+                                    "Da (fixed absolute)" = "Da"),
+                        selected = default_config$ErrorRangeUnit, inline = TRUE),
+            helpText(paste(
+              "ppm: tolerance of each ion = m/z \u00d7 ppm \u00d7 1e-6, so the window",
+              "narrows at low m/z and widens at high m/z, matching how mass error",
+              "actually behaves. Da: one fixed absolute tolerance for every ion",
+              "(the original Java behaviour; use it to reproduce old results).")),
             numericInput("ErrorRange", "Ion Matching Error Range",
-                        value = default_config$ErrorRange, min = 0.0001, max = 1, step = 0.0001),
+                        value = default_config$ErrorRange, min = 1e-5, max = 1e4, step = 0.0001),
             numericInput("ErrorRangeInGroups", "Within-Group Matching Error Range",
-                        value = default_config$ErrorRangeInGroups, min = 0.0001, max = 1, step = 0.0001),
+                        value = default_config$ErrorRangeInGroups, min = 1e-5, max = 1e4, step = 0.0001),
+            helpText(paste("Units follow the selector above. Switching the unit",
+                           "resets both values to that unit's defaults.")),
             numericInput("FloatCount", "Decimal Places",
                         value = default_config$FloatCount, min = 1, max = 15, step = 1),
-            checkboxInput("mergeRows", "Merge Duplicate Rows", value = default_config$mergeRows)
+            checkboxInput("mergeRows", "Merge Duplicate Rows", value = default_config$mergeRows),
+            selectInput("MatrixPick", "Duplicate Ion Inside One Sample",
+                        choices = c("Highest intensity (v1.0.4 default)" = "max",
+                                    "First in file (original Java)" = "first"),
+                        selected = default_config$MatrixPick),
+            helpText(paste(
+              "When several centroids of the same sample fall inside one ion's",
+              "m/z window, which one represents it. \u201cFirst in file\u201d is the",
+              "original rule; \u201chighest intensity\u201d stops the chosen branch from",
+              "flickering when a feature splits into several m/z branches.")),
+            numericInput("ClusterRtTol", "Apex RT Tolerance (min)",
+                        value = default_config$ClusterRtTol, min = 0, step = 0.05),
+            helpText(paste(
+              "Extra check during within-group matching: the ion's apex RT must be",
+              "within this many minutes. 0 disables it and leaves only the original",
+              "\u201csame integer minute bin\u201d rule, which is required to reproduce the",
+              "original Java output. Needs an RT_apex column in the input."))
           )
         ),
         column(6,
@@ -115,10 +144,22 @@ dmetfinder_ui <- fluidPage(
       fluidRow(
         column(6,
           card_panel("Relative Ion Intensity Scoring", "percent",
-            textInput("relIntensityRange1", "Relative Intensity Ranges (comma-separated)",
+            textInput("relIntensityRange1", "Table 1 Ranges (comma-separated)",
                      value = dmf_numlist(default_config$relativeIntensityRange1)),
-            textInput("relIntensityValue1", "Relative Intensity Scores (comma-separated)",
-                     value = dmf_numlist(default_config$relativeIntensityValue1))
+            textInput("relIntensityValue1", "Table 1 Scores (comma-separated)",
+                     value = dmf_numlist(default_config$relativeIntensityValue1)),
+            numericInput("relIntensitySplit", "Split on Ion Count",
+                        value = default_config$relativeIntensitySplit, min = 0, step = 1),
+            textInput("relIntensityRange2", "Table 2 Ranges (comma-separated)",
+                     value = dmf_numlist(default_config$relativeIntensityRange2)),
+            textInput("relIntensityValue2", "Table 2 Scores (comma-separated)",
+                     value = dmf_numlist(default_config$relativeIntensityValue2)),
+            helpText(paste(
+              "Relative intensity = the ion's intensity divided by the mean intensity",
+              "of its m/z group. Which table applies above the split follows the",
+              "original implementation and is not symmetric: all-ion scoring uses",
+              "table 2, the 50% pass uses table 1. With the shipped values both",
+              "tables score identically, so this only matters if you edit them."))
           )
         ),
         column(6,
@@ -126,7 +167,15 @@ dmetfinder_ui <- fluidPage(
             numericInput("p50IonPercent", "50% Filter Threshold",
                         value = default_config$p50IonPercent, min = 0, max = 1, step = 0.05),
             numericInput("p80IonPercent", "80% Filter Threshold",
-                        value = default_config$p80IonPercent, min = 0, max = 1, step = 0.05)
+                        value = default_config$p80IonPercent, min = 0, max = 1, step = 0.05),
+            numericInput("FoldChangeThreshold", "Verdict Fold-Change Threshold",
+                        value = default_config$FoldChangeThreshold, min = 1, step = 0.5),
+            numericInput("PValueThreshold", "Verdict P-Value Threshold",
+                        value = default_config$PValueThreshold, min = 0, max = 1, step = 0.01),
+            helpText(paste(
+              "The last two only decide the wording of the Verdict column in the",
+              "merged differential-ion sheet (higher in A / higher in B / no",
+              "change). They do not filter rows and do not affect any other sheet."))
           )
         )
       ),
@@ -162,6 +211,7 @@ dmetfinder_ui <- fluidPage(
               tabPanel("Group A - Isotope Search", DTOutput("result_isoA")),
               tabPanel("Group A - 80% Ions vs Group B Total Ions", DTOutput("result_compareA")),
               tabPanel("Group A - Group B Differential Ion Summary", DTOutput("result_diff")),
+              tabPanel("Differential Ions - Integrated (A and B)", DTOutput("result_diff_union")),
               tabPanel("Group B - 50% and 80% Ion Filter", DTOutput("result_filterB")),
               tabPanel("Group B - Ion Scoring", DTOutput("result_scoreB")),
               tabPanel("Group B - Isotope Search", DTOutput("result_isoB")),

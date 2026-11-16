@@ -20,45 +20,55 @@ csv_ctx_new <- function(out_dir, keep_empty = FALSE, bom = FALSE) {
   ctx
 }
 
-#' 按 dmetfinder_run() 的写盘顺序展平 18 个 sheet
+#' 按 dmetfinder_run() 的写盘顺序展平 19 个 sheet
 csv_collect <- function(res) {
   s <- res$sheets
   c(s$A,
     list(s$compare_ab),
     list(s$diff_ab),
     list(s$diff_ba),
+    if (is.null(s$diff_union)) list() else list(s$diff_union),
     s$B,
     list(s$compare_ba))
 }
 
-#' 期望的 18 个 sheet 名（顺序敏感，用于断言）
-csv_expected_names <- function(g1, g2, p80) {
+#' 期望的 sheet 名（顺序敏感，用于断言）。整合表在两组都没有离子时不出，故长度可变。
+#'
+#' 这组字符串必须与 R/dmetfinder_functions.R 里 dmf_sheet() 的第一个参数
+#' **逐字一致**。核心表名在 2026-11-11 整体英文化，本文件当时未跟进，导致
+#' 断言在写盘阶段中止（计算全跑完、却一个 CSV 都不落盘）。改核心表名时
+#' 必须同步改这里，反之亦然——两边只有一个真源，就是核心。
+csv_expected_names <- function(g1, g2, p80, with_union = TRUE) {
   one <- function(g) c(
-    paste0(g, "离子分布初筛"),
-    paste0(g, "50%分布频率离子"),
-    paste0(g, p80, "分布频率离子"),
-    paste0(g, "50%离子单独打分"),
-    paste0(g, "总离子平均得分"),
-    paste0(g, "离子打分汇总"),
-    paste0(g, "同位素离子查找")
+    paste0(g, " ion distribution"),
+    paste0(g, " 50% ions by frequency"),
+    paste0(g, " ", p80, " ions by frequency"),
+    paste0(g, " 50% ion scores"),
+    paste0(g, " all-ion scores"),
+    paste0(g, " score summary"),
+    paste0(g, " isotope search")
   )
   c(one(g1),
-    paste0(g1, p80, "离子和", g2, "比对"),
-    sprintf("%s和%s差异离子(%s比%s)", g1, g2, g1, g2),
-    sprintf("%s和%s差异离子(%s比%s)", g2, g1, g2, g1),
+    paste0(g1, " ", p80, " ions vs ", g2),
+    sprintf("%s vs %s diff. ions", g1, g2),
+    sprintf("%s vs %s diff. ions", g2, g1),
+    if (isTRUE(with_union)) sprintf("%s+%s merged ions", g1, g2) else character(0),
     one(g2),
-    paste0(g2, p80, "离子和", g1, "比对"))
+    paste0(g2, " ", p80, " ions vs ", g1))
 }
 
 #' 对应的原 xlsx 名（仅用于 schema.csv 追溯，不实际写出）
 #' 必须与 dmetfinder_run() 里的 sprintf 逐字一致，否则追溯会断。
-csv_workbook_names <- function(g1, g2, p80) {
-  filt <- function(g) sprintf("%s-筛选50%%和%s离子.xlsx", g, p80)
-  scor <- function(g) sprintf("%s-离子打分.xlsx", g)
-  isot <- function(g) sprintf("%s-同位素离子查找.xlsx", g)
-  cmpr <- function(g, o) sprintf("%s-%s离子与%s总离子比对分析.xlsx", g, p80, o)
-  diff <- sprintf("%s-%s差异离子筛选汇总.xlsx", g1, g2)
+#' 注意 % 在文件名里一律换成 pct（dmf_file_tag），否则 shell / URL 里会有歧义。
+csv_workbook_names <- function(g1, g2, p80, with_union = TRUE) {
+  tag <- gsub("%", "pct", p80, fixed = TRUE)
+  filt <- function(g) sprintf("%s_filtered_50pct_and_%s_ions.xlsx", g, tag)
+  scor <- function(g) sprintf("%s_ion_scores.xlsx", g)
+  isot <- function(g) sprintf("%s_isotope_search.xlsx", g)
+  cmpr <- function(g, o) sprintf("%s_%s_ions_vs_%s_all_ions.xlsx", g, tag, o)
+  diff <- sprintf("%s_vs_%s_differential_ions.xlsx", g1, g2)
   c(rep(filt(g1), 3), rep(scor(g1), 3), isot(g1), cmpr(g1, g2), diff, diff,
+    if (isTRUE(with_union)) diff else character(0),
     rep(filt(g2), 3), rep(scor(g2), 3), isot(g2), cmpr(g2, g1))
 }
 
@@ -116,14 +126,15 @@ csv_write_one <- function(df, path, bom = FALSE) {
   invisible(path)
 }
 
-#' 写出全部 18 个 CSV + schema.csv。返回 outputs 列表供信封使用。
+#' 写出全部 CSV + schema.csv。返回 outputs 列表供信封使用。
 csv_write_all <- function(res, ctx, groups, env = NULL) {
   sheets <- csv_collect(res)
   p80 <- as.character(res$p80_str)
   g1 <- groups[[1L]]
   g2 <- groups[[2L]]
 
-  exp_names <- csv_expected_names(g1, g2, p80)
+  exp_names <- csv_expected_names(g1, g2, p80,
+                                  with_union = !is.null(res$sheets$diff_union))
   got_names <- vapply(sheets, function(s) as.character(s$name), character(1L))
 
   if (length(sheets) != length(exp_names)) {
@@ -141,7 +152,8 @@ csv_write_all <- function(res, ctx, groups, env = NULL) {
                  paste(exp_names[bad], collapse = " | ")), call. = FALSE)
   }
 
-  wb_names <- csv_workbook_names(g1, g2, p80)
+  wb_names <- csv_workbook_names(g1, g2, p80,
+                                 with_union = !is.null(res$sheets$diff_union))
   schema <- vector("list", 0L)
   outputs <- vector("list", 0L)
 

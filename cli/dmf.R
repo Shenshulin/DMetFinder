@@ -85,7 +85,7 @@ spec_diff <- function() c(list(
   a = args_value(help = "A 组输入 xlsx"),
   b = args_value(help = "B 组输入 xlsx"),
   out = args_value(help = "输出目录"),
-  groups = args_value(default = "A组,B组", help = "组名，逗号分隔"),
+  groups = args_value(default = "Group A,Group B", help = "组名，逗号分隔"),
   params = args_value(help = "参数 JSON 文件（键名同 R/config.R）"),
   keep_empty_cols = args_flag(help = "保留全空列"),
   bom = args_flag(help = "CSV 带 UTF-8 BOM（Excel 直接打开时需要）"),
@@ -246,7 +246,7 @@ cmd_diff <- function(p) {
     return(e)
   }
 
-  groups <- trimws(strsplit(p$values$groups %||% "A组,B组", ",")[[1L]])
+  groups <- trimws(strsplit(p$values$groups %||% "Group A,Group B", ",")[[1L]])
   if (length(groups) != 2L || any(!nzchar(groups))) {
     env_set_error(e, "usage", "--groups 需要两个组名（逗号分隔）")
     return(e)
@@ -288,7 +288,7 @@ cmd_diff <- function(p) {
   )
   if (!isTRUE(p$values$quiet)) cat("\n", file = stderr())
 
-  # ---- CSV（18 个 sheet 拆表） ----
+  # ---- CSV（19 个 sheet 拆表） ----
   ctx <- csv_ctx_new(out, keep_empty = isTRUE(p$values$keep_empty_cols),
                      bom = isTRUE(p$values$bom))
   written <- csv_write_all(res, ctx, groups, e)
@@ -302,6 +302,7 @@ cmd_diff <- function(p) {
   env_add_metric(e, "n_rows_b", nrow(res$groups$B$ions))
   env_add_metric(e, "n_diff_ab", nrow(res$diff$ab))
   env_add_metric(e, "n_diff_ba", nrow(res$diff$ba))
+  env_add_metric(e, "n_diff_union", if (is.null(res$diff$union)) 0L else nrow(res$diff$union$df))
   env_add_metric(e, "p80_label", as.character(res$p80_str))
   env_add_metric(e, "dropped_empty_cols", sum(vapply(written$outputs,
                                                      function(o) o$dropped_cols, integer(1L))))
@@ -700,7 +701,7 @@ COMMANDS <- list(
   inspect     = list(fn = cmd_inspect,     spec = spec_inspect(),
                      desc = "检查 xlsx 结构，不运行分析"),
   diff        = list(fn = cmd_diff,        spec = spec_diff(),
-                     desc = "A/B 差异筛选 -> 18 个 CSV"),
+                     desc = "A/B 差异筛选 -> 19 个 CSV"),
   `msg-extract` = list(fn = cmd_msg_extract, spec = spec_msg_extract(),
                      desc = "MS1/MS2 抽取 + MSP（MSGeter 第 1 页）"),
   `msg-match` = list(fn = cmd_msg_match,   spec = spec_msg_match(),
@@ -904,7 +905,7 @@ main <- function() {
 }
 
 # ---- 收尾 ----------------------------------------------------
-# 实测（demo_data，56 s，18 个 CSV + 235 MB）：
+# 实测（demo_data，56 s，19 个 CSV + 235 MB）：
 #   平铺脚本跑同一流程          -> 退出码 0
 #   放进 main()/cmd_diff() 里跑 -> 退出码 139（产物全部完好）
 # 差异在于大对象在函数返回后变垃圾，之后仍有大量写盘与哈希。因此 cmd_diff
