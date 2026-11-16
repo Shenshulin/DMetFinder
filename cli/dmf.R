@@ -10,7 +10,7 @@
 # 写 xlsx，改由 csv_out.R 从返回值生成 CSV。
 # ============================================================
 
-DMF_VERSION <- "1.0.4"
+DMF_VERSION <- "1.0.5"
 
 # ---- 定位项目根并载入 lib ----
 # 刻意写成平铺形式而不是 local({...})：嵌套一层会让 R 在进程收尾阶段
@@ -59,6 +59,25 @@ dmf_git_commit <- function() {
     if (length(hit) > 0L) return(substr(trimws(sub(" .*$", "", hit[[1L]])), 1L, 7L))
   }
   NA_character_
+}
+
+# ---- 工作区是否脏 ----
+# 判断不了就返回 NA，绝不假装干净：commit 号只说明「从哪个提交出发」，
+# 工作区带着未提交改动跑出来的结果，clone 那个 commit 是复现不了的。
+# 只读 .git 判不出来（要逐文件比对 blob），所以这里必须问 git；没有 .git
+# （合作者拿到的是 zip）或没装 git 时返回 NA。
+dmf_git_dirty <- function() {
+  if (is.na(dmf_git_commit())) return(NA)
+  g <- Sys.which("git")
+  if (!nzchar(g)) return(NA)
+  out <- tryCatch(
+    suppressWarnings(system2(g, c("-C", shQuote(DMF_ROOT), "status", "--porcelain"),
+                             stdout = TRUE, stderr = FALSE)),
+    error = function(e) NULL
+  )
+  st <- attr(out, "status")
+  if (is.null(out) || (!is.null(st) && length(st) == 1L && !is.na(st) && st != 0L)) return(NA)
+  length(out) > 0L
 }
 
 # ============================================================
@@ -153,7 +172,7 @@ spec_job <- function() c(list(
 # ============================================================
 
 cmd_version <- function(p) {
-  e <- env_new("version", DMF_VERSION, dmf_git_commit())
+  e <- env_new("version", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
   env_add_metric(e, "r_version", paste(R.version$major, R.version$minor, sep = "."))
   env_add_metric(e, "platform", R.version$platform)
   env_add_metric(e, "project_root", DMF_ROOT)
@@ -161,7 +180,7 @@ cmd_version <- function(p) {
 }
 
 cmd_doctor <- function(p) {
-  e <- env_new("doctor", DMF_VERSION, dmf_git_commit())
+  e <- env_new("doctor", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
   res <- doctor_run(DMF_ROOT)
   env_set_extra(e, "checks", lapply(res$checks, function(c)
     list(name = c$name, status = c$status, detail = c$detail,
@@ -181,14 +200,14 @@ cmd_doctor <- function(p) {
 cmd_inspect <- function(p) {
   input <- p$values$input
   if (is.null(input)) {
-    e <- env_new("inspect", DMF_VERSION, dmf_git_commit())
+    e <- env_new("inspect", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
     env_set_error(e, "usage", "缺少 --input", "例：--input demo_data/groupA.xlsx")
     return(e)
   }
   out <- p$values$out %||% file.path(dirname(input), "inspect")
   out <- util_norm_path(out)
 
-  e <- env_new("inspect", DMF_VERSION, dmf_git_commit())
+  e <- env_new("inspect", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
   env_set_extra(e, "job_dir", out)
   env_add_input(e, "xlsx", input)
   env_set_params(e, list(block_width = args_as_int(p$values$block_width, NA_integer_)))
@@ -220,7 +239,7 @@ cmd_diff <- function(p) {
   b <- p$values$b
   out <- p$values$out
 
-  e <- env_new("diff", DMF_VERSION, dmf_git_commit())
+  e <- env_new("diff", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
   if (is.null(a) || is.null(b) || is.null(out)) {
     env_set_error(e, "usage", "缺少 --a / --b / --out",
                   "例：--a demo_data/groupA.xlsx --b demo_data/groupB.xlsx --out out/run1")
@@ -334,7 +353,7 @@ dmf_check_out <- function(e, out, overwrite) {
 
 cmd_msg_extract <- function(p) {
   v <- p$values
-  e <- env_new("msg-extract", DMF_VERSION, dmf_git_commit())
+  e <- env_new("msg-extract", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
 
   if (is.null(v$ms_dir) || is.null(v$out)) {
     env_set_error(e, "usage", "缺少 --ms-dir / --out",
@@ -465,7 +484,7 @@ cmd_msg_extract <- function(p) {
 
 cmd_msg_match <- function(p) {
   v <- p$values
-  e <- env_new("msg-match", DMF_VERSION, dmf_git_commit())
+  e <- env_new("msg-match", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
 
   need <- c("features", "ms2_info", "msp_dir", "out")
   miss <- need[vapply(need, function(k) is.null(v[[k]]), logical(1L))]
@@ -559,7 +578,7 @@ cmd_msg_match <- function(p) {
 
 cmd_rt_apex <- function(p) {
   v <- p$values
-  e <- env_new("rt-apex", DMF_VERSION, dmf_git_commit())
+  e <- env_new("rt-apex", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
 
   need <- c("features", "ms_dir", "out")
   miss <- need[vapply(need, function(k) is.null(v[[k]]), logical(1L))]
@@ -630,7 +649,7 @@ cmd_rt_apex <- function(p) {
 
 cmd_job <- function(p) {
   v <- p$values
-  e <- env_new("job", DMF_VERSION, dmf_git_commit())
+  e <- env_new("job", DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
 
   if (is.null(v$out)) {
     env_set_error(e, "usage", "缺少 --out", "例：job --out out/msg1")
@@ -882,7 +901,7 @@ main <- function() {
   e <- tryCatch(
     entry$fn(parsed),
     error = function(err) {
-      ee <- env_new(cmd, DMF_VERSION, dmf_git_commit())
+      ee <- env_new(cmd, DMF_VERSION, dmf_git_commit(), dmf_git_dirty())
       env_set_error(ee, "runtime", conditionMessage(err),
                     "加 --json 查看结构化错误；完整堆栈见 stderr")
       ee

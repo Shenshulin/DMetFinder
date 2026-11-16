@@ -13,11 +13,15 @@ DMF_EXIT <- list(
   warn        = 4L    # 成功但有警告
 )
 
-env_new <- function(command, version, commit = NA_character_) {
+#' @param dirty 工作区是否有未提交改动。TRUE/FALSE/NA（NA = 判断不了，
+#'   例如没有 .git 或没装 git）。commit 号只说明出发点，工作区带改动跑出的
+#'   结果无法用那个 commit 复现，所以这一项与 commit 同等重要。
+env_new <- function(command, version, commit = NA_character_, dirty = NA) {
   e <- new.env(parent = emptyenv())
   e$command    <- command
   e$version    <- version
   e$git_commit <- commit
+  e$git_dirty  <- dirty
   e$started_at <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
   e$t0         <- Sys.time()
   e$ok         <- TRUE
@@ -132,6 +136,7 @@ env_to_list <- function(e) {
       status      = env_status(e),
       version     = e$version,
       git_commit  = e$git_commit,
+      git_dirty   = e$git_dirty,
       started_at  = e$started_at,
       duration_s  = round(duration, 3L),
       params_hash = e$params_hash,
@@ -166,7 +171,11 @@ env_render <- function(e) {
     sprintf("命令      %s", x$command),
     sprintf("状态      %s", x$status),
     sprintf("版本      %s%s", x$version,
-            if (is.na(x$git_commit)) "" else paste0(" (", x$git_commit, ")")),
+            if (is.na(x$git_commit)) "" else paste0(
+              " (", x$git_commit,
+              if (isTRUE(x$git_dirty)) ", 工作区有未提交改动" else "",
+              if (identical(x$git_dirty, NA)) ", 工作区状态未知" else "",
+              ")")),
     sprintf("耗时      %.1f s", x$duration_s)
   )
   if (length(x$outputs) > 0L) {

@@ -1,6 +1,6 @@
 # DMetFinder 命令行（agent 调用层）使用说明
 
-> 适用于 DMetFinder 1.0.4。图形界面（Shiny）保持不变；本命令行与界面调用
+> 适用于 DMetFinder 1.0.5。图形界面（Shiny）保持不变；本命令行与界面调用
 > 的是同一批计算函数，结果等价（逐单元格一致，见 `tests/agent/test_csv_fidelity.R`）。
 > 峰质量（第三页）仍在开发，**未**接入本命令行。
 
@@ -179,12 +179,13 @@ column_name, internal_key, header_r1, header_r2, header_r3, dropped
 
 ## 6. 可复现
 
-`run.json` 含：版本、git commit、参数哈希、每个输入的 sha256、每个输出的 sha256、
+`run.json` 含：版本、git commit、工作区是否脏（`git_dirty`）、参数哈希、每个输入的 sha256、每个输出的 sha256、
 耗时、警告。方法学里可以写：
 
-> All DMetFinder analyses were performed with version 1.0.4 (commit …); the exact
-> parameter set and SHA-256 checksums of all inputs and output tables are recorded
-> in the `run.json` accompanying each analysis.
+> All DMetFinder analyses were performed with version 1.0.5 (commit …, clean
+> worktree as recorded by `git_dirty`); the exact parameter set and SHA-256
+> checksums of all inputs and output tables are recorded in the `run.json`
+> accompanying each analysis.
 
 改参数：写一个 JSON，键名与 `R/config.R` 的 `default_config` 一致，用 `--params` 传入。
 
@@ -282,13 +283,13 @@ MSGeter 三条命令不复制上游算法，而是 `source()` 三个 `shiny_app/
 
 ## 9. 分发
 
-`Rscript tools/make_dist.R --zip` 产出 `dist/DMetFinder-CLI-1.0.4.zip`（约 24 MB）。
+`Rscript tools/make_dist.R --zip` 产出 `dist/DMetFinder-CLI-1.0.5.zip`（约 24 MB）。
 
 白名单打包，只含：`cli/`、`R/config.R`、`R/dmetfinder_functions.R`、`demo_data/`、
 `docs/agent/`、`setup.R`、`deps.csv`、`renv.lock`、`README_FIRST.txt`、`MANIFEST.txt`。
 `www/`、`figures/`、`tests/`、`shiny_app/`、`server/`、`ui/`、`out/`、`dist/` 一律不带。
 
-归档内保留顶层目录 `DMetFinder-CLI-1.0.4/`，解压即得一个可运行目录。
+归档内保留顶层目录 `DMetFinder-CLI-1.0.5/`，解压即得一个可运行目录。
 `MANIFEST.txt` 记录每个文件的字节数与 sha256；校验方法见文件内说明。
 
 **已验证**：把 zip 解压到无关目录后，`setup.R --check-only` 全绿，

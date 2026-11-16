@@ -176,17 +176,22 @@ out\run1\
 {
   "ok": true,
   "command": "diff",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "git_commit": "abc1234",
+  "git_dirty": false,
   "duration_s": 58.3,
   "params_hash": "…",
   "inputs":  [{"role": "group_a", "path": "…", "sha256": "40041f86…"}],
-  "outputs": [{"role": "table", "sheet": "A组离子分布初筛", "rows": 354260, "cols": 16, "sha256": "…"}],
+  "outputs": [{"role": "table", "sheet": "Group A ion distribution", "rows": 354260, "cols": 16, "sha256": "…"}],
   "warnings": [],
-  "metrics": {"n_tables": 18, "n_rows_a": 354260, "n_rows_b": 327400,
-              "n_diff_ab": 13375, "n_diff_ba": 12392}
+  "metrics": {"n_tables": 19, "n_rows_a": 354260, "n_rows_b": 327400,
+              "n_diff_ab": 13375, "n_diff_ba": 12392, "n_diff_union": 21064}
 }
 ```
+
+`git_dirty` 为 `true` 表示跑分析时工作区带着未提交改动：此时 `git_commit` 只
+说明出发点，clone 那个 commit 跑不出同样的结果。写成 `null` 表示判断不了
+（没有 `.git` 或没装 git），不是"干净"。
 
 ---
 
@@ -250,7 +255,7 @@ Rscript cli\dmf.R diff ...
 
 论文 Methods 里可以写这样一句话：
 
-> All differential-ion screening was performed with DMetFinder CLI v1.0.4
+> All differential-ion screening was performed with DMetFinder CLI v1.0.5
 > (R 4.6.0; package versions recorded in `renv.lock`). Input files were
 > verified by SHA-256 (`sha256sum` in `run.json`).
 
@@ -282,7 +287,7 @@ Rscript cli\dmf.R diff ...
 ## 8. 目录结构
 
 ```
-DMetFinder-CLI-1.0.4\
+DMetFinder-CLI-1.0.5\
 ├── cli\
 │   ├── dmf.R              入口（子命令分发）
 │   ├── run-dmf.bat        Windows 包装（修环境变量、定位 Rscript）
