@@ -23,8 +23,8 @@ RtGeter_ui <- function(id){
       }
       .rtg-hero__unit { color: #4f46e5; font-size: .9rem; font-weight: 600; }
       .rtg-meta { color: #6b7280; font-size: .78rem; margin-top: -4px; }
-      /* fileInput 上传完成后 Shiny 留下的进度条会横在文件名下面，
-         文件名和行列数由 .rtg-meta 显示，这里直接不显示进度条 */
+      /* After a fileInput upload the progress bar Shiny leaves behind lies across
+         the file name; the name and row/column counts are shown by .rtg-meta, so hide the bar */
       .shiny-file-input-progress { display: none; }
       .rtg-actions { display: flex; gap: 8px; margin-bottom: 8px; }
       .rtg-actions .btn { flex: 1 1 0; margin-bottom: 0; }

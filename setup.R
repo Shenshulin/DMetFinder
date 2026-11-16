@@ -120,9 +120,10 @@ read_deps <- function(path) {
     stop(sprintf("deps.csv not found at %s\nRun this script from the DMetFinder folder.",
                  path), call. = FALSE)
   }
-  # fileEncoding="UTF-8-BOM"：deps.csv 带 UTF-8 BOM，在非 UTF-8 区域设置下
-  # 首列会被读成 "X...package"，于是报 deps.csv 缺列。显式声明后任何 locale
-  # 都能读；文件没有 BOM 时同样适用。
+  # fileEncoding="UTF-8-BOM": deps.csv carries a UTF-8 BOM, so under a non-UTF-8
+  # locale the first column is read as "X...package" and the code reports a
+  # missing column. Declaring it explicitly makes the read work under any locale,
+  # including when the file has no BOM at all.
   d <- utils::read.csv(path, stringsAsFactors = FALSE,
                        colClasses = "character", strip.white = TRUE,
                        fileEncoding = "UTF-8-BOM")

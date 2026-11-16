@@ -3,7 +3,19 @@
 suppressPackageStartupMessages({
   library(shiny); library(DT); library(shinyWidgets)
 })
-owd <- setwd("D:/ms_soft/DMetFinder")
+
+# 项目根：从根目录运行时就是 getwd()；用 Rscript tests/xxx.R 运行时
+# 反推脚本自身的上一级。路径不要写死成某台机器的绝对路径。
+.dmf_root <- function() {
+  if (file.exists("app.R")) return(normalizePath(getwd()))
+  a <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  if (length(a)) {
+    p <- normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE)
+    return(dirname(dirname(p)))
+  }
+  getwd()
+}
+owd <- setwd(.dmf_root())
 on.exit(setwd(owd), add = TRUE)
 
 source("shiny_app/server/RtGeter_server.R", encoding = "UTF-8")

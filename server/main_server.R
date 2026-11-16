@@ -4,11 +4,14 @@
 
 server <- function(input, output, session) {
 
-  # 断线自动重连。
-  # Shiny 默认不允许恢复：浏览器与服务端的 WebSocket 一断（标签页被系统挂起、
-  # 笔记本休眠唤醒、Chrome 回收后台标签），页面就永久停在灰罩上，只能手动刷新；
-  # 而手刷会新建 session，已上传的峰表 / 已跑出的结果全部丢。
-  # 打开这个开关后客户端会自己重连，服务端进程还活着时能拿回原 session。
+  # Automatic reconnect after a disconnect.
+  # Shiny disallows session resumption by default: as soon as the WebSocket
+  # between browser and server drops (tab suspended by the OS, laptop resumed
+  # from sleep, Chrome discarding a background tab), the page is stuck behind
+  # the grey overlay forever and only a manual refresh helps -- but a manual
+  # refresh starts a new session and every uploaded peak table / finished
+  # result is lost. With this switch on, the client reconnects by itself and
+  # recovers the original session as long as the server process is still alive.
   session$allowReconnect(TRUE)
 
   # ============ DMetFinder Server ============
@@ -20,8 +23,9 @@ server <- function(input, output, session) {
   RtGeter_server("RtGeter")
 
   # ============ Peak Quality Server ============
-  # 与 ui/main_ui.R 共用同一个开关（R/config.R 的 ui_show_peak_quality）：
-  # 页签不展示时连 server 也不挂载，避免无人使用的后台计算。
+  # Shares the same switch as ui/main_ui.R (ui_show_peak_quality in
+  # R/config.R): when the tab is not shown the server is not mounted either,
+  # so no background work runs for something nobody can see.
   if (isTRUE(ui_show_peak_quality)) {
     peak_quality_server("PeakQuality")
   }

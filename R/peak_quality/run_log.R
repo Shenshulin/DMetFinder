@@ -1,18 +1,19 @@
 # ============================================================
-# Peak Quality - 运行日志落盘 / 任务规模预估 / 断线快照
+# Peak Quality - run log on disk / job-size estimate / disconnect snapshot
 # ============================================================
-# 为什么有这一层：
-#   `append_log()` 只是把文本塞进一个 reactiveVal。浏览器一旦丢掉
-#   websocket（页面整片变灰就是这件事），那个字符串就再也读不到了，
-#   磁盘上也没有任何记录 —— 一次 28 分钟的运行等于没跑过。
-#   所以每一行日志同时写一份到文件；一个 Shiny 会话一个文件
-#   （模块 server 每次建会话时打开），用 RUN START / RUN END 切分每次运行。
+# Why this layer exists:
+#   `append_log()` only pushes text into a reactiveVal. As soon as the browser
+#   drops the websocket (which is exactly what the greyed-out page means) that
+#   string can never be read again, and nothing is on disk either -- a 28-minute
+#   run would leave no trace. So every log line is also written to a file: one
+#   file per Shiny session (the module server opens it when the session starts),
+#   with RUN START / RUN END delimiting each run.
 # ============================================================
 
 PQ_LOG_DIR <- file.path(".workbuddy", "logs", "peak_quality")
 PQ_RUN_DIR <- file.path(".workbuddy", "runs")
 
-# 一台机器上百次运行后的日志不该无限堆积
+# Logs from hundreds of runs on one machine must not pile up forever
 PQ_LOG_KEEP_DAYS <- 14
 
 pq_log_open <- function(dir = PQ_LOG_DIR, tag = "peak_quality") {
@@ -46,15 +47,16 @@ pq_log_prune <- function(dir, keep_days = PQ_LOG_KEEP_DAYS) {
 }
 
 # ------------------------------------------------------------
-# 任务规模 / 时长预估
+# Job size / duration estimate
 # ------------------------------------------------------------
-# 实测标定（2026-10-22，P173.raw 54 MB，10 ppm，0.3 min 半窗）：
-#   * read_ms_file() 读一个 .raw 并建 MS1 索引：热态 ~34 s，冷态 ~55 s
-#   * 一行（XIC -> 边界 -> presence -> 作者打分）：~9 ms
-# 只在同一个数量级上可信；它的用途是让 69000 行别看起来像 2 分钟的小活。
+# Measured calibration (2026-10-22, P173.raw 54 MB, 10 ppm, 0.3 min half-window):
+#   * read_ms_file() reads one .raw and builds the MS1 index: ~34 s warm, ~55 s cold
+#   * one row (XIC -> bounds -> presence -> author score): ~9 ms
+# Trustworthy only as an order of magnitude; its purpose is to stop a 69,000-row
+# job from looking like a two-minute chore.
 PQ_EST_ROW_MS <- 9
 PQ_EST_FILE_S <- 40
-PQ_LONG_JOB_S <- 600      # 超过这个就明确警告
+PQ_LONG_JOB_S <- 600      # beyond this the warning is explicit
 
 pq_estimate_job <- function(n_rows, n_files,
                             row_ms = PQ_EST_ROW_MS, file_s = PQ_EST_FILE_S) {
@@ -75,9 +77,9 @@ pq_format_duration <- function(sec) {
 }
 
 # ------------------------------------------------------------
-# 断线/关闭页面时把结果写到磁盘
+# Write results to disk on disconnect or page close
 # ------------------------------------------------------------
-# 只在大任务上自动落盘：小演示跑一次就写一堆 CSV 没有意义。
+# Auto-save only for large jobs: dumping a pile of CSV from a small demo run is pointless.
 PQ_AUTOSAVE_MIN_ROWS <- 2000L
 PQ_RUN_KEEP <- 3L
 # `detail` is what makes a big run heavy: 1.3 GB for 69000 rows, because every

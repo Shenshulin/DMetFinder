@@ -245,14 +245,14 @@ Ms2Geter_server <- function(id){
         for(i in seq_len(nrow(demo_ms2))){
 
           if (!"sample" %in% names(demo_ms2))
-  stop("demo.csv中不存在列: sample")
+  stop("demo.csv does not contain the column: sample")
 
 sample_i <- as.character(
   demo_ms2$sample[i]
 )
 
 if (!"Sample" %in% names(all_ms2))
-  stop("MS2_Group_Info.csv中不存在列: Sample")
+  stop("MS2_Group_Info.csv does not contain the column: Sample")
 
           mz_i <- demo_ms2$`m/z`[i]
 

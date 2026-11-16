@@ -6,14 +6,15 @@
 # app_css() = component styles.
 # ============================================================
 
-# 主流程页签：MSGeter（前处理）+ DMetFinder（差异筛选）。
+# Main pipeline tabs: MSGeter (pre-processing) + DMetFinder (differential screening).
 dmf_tabs <- list(
   tabPanel("MSGeter",    icon = icon("vial"),                   msgeter_ui),
   tabPanel("DMetFinder", icon = icon("magnifying-glass-chart"), dmetfinder_ui)
 )
 
-# 质量检测（Peak Quality）当前不对外展示：不改代码、只关入口，
-# 开关在 R/config.R 的 ui_show_peak_quality。置 TRUE 即恢复该页签。
+# Peak Quality is currently not exposed: no code was removed, only the entry
+# point is switched off. The switch is ui_show_peak_quality in R/config.R;
+# setting it to TRUE restores the tab.
 if (isTRUE(ui_show_peak_quality)) {
   dmf_tabs <- c(dmf_tabs, list(
     tabPanel("Peak Quality", icon = icon("chart-line"),

@@ -12,11 +12,12 @@
 MS1_SCAN_TYPE <- "FTMS - p ESI Full ms [100.0000-1500.0000]"
 
 # ------------------------------------------------------------
-# 内存/耗时探针（诊断用，不影响结果）
-# 2026-10-26: 一次运行把 R 撑到 16 GB 工作集、系统只剩 0.46 GB
-# 空闲内存，httpuv 再也发不出心跳，页面永久灰罩。日志里看不到
-# 任何报错，因为进程只是在换页，并没有抛错。这里按样品打印
-# gc 占用与阶段耗时，下一次运行就能定位是哪一步爆的。
+# Memory / timing probe (diagnostic only, does not affect results)
+# 2026-10-26: one run pushed R to a 16 GB working set, leaving only
+# 0.46 GB of free memory; httpuv could no longer send heartbeats and
+# the page stayed grey forever. No error shows in the log, because the
+# process was only paging, not throwing. This prints gc usage and stage
+# timings per sample, so the next run reveals which step blew up.
 # ------------------------------------------------------------
 mem_probe <- function(tag) {
   g <- tryCatch(gc(verbose = FALSE), error = function(e) NULL)
@@ -343,29 +344,34 @@ read_ms_file <- function(filepath, ppm = 10) {
   if (identical(ext, "raw")) {
 
     # ---------------- Thermo .raw (rawrr) ----------------
-    # 2026-10-26: 原写法 rawrr::readSpectrum(scan = 1:N, mode="profile")
-    # 一次性把所有扫描读入。rawrr 每个 scan 对象同时带 profile 阵列
-    # （mZ，SA1.raw 约 28,112 点）和 centroid 流（centroid.mZ，约 1,809 点），
-    # 单张 444 KB；12,470 张 = 5.4 GB，再复制进 spectra 列表、再转
-    # data.frame，实测把 R 撑到 22 GB、系统内存耗尽、页面永久灰罩。
-    # 这里改为每 200 张一块读取，只保留 centroid 阵列，
-    # 单文件常驻约 0.3 GB，结果与原来一致（原本也只取 centroid 阵列）。
-    # 2026-10-26: msLevel 原先靠 scanType 与常量 MS1_SCAN_TYPE
-    # （"FTMS - p ESI …"，负离子）严格相等判断；正离子文件是
-    # "FTMS + p ESI …"，比对全部失败 -> SA1.raw 的 12,470 张全被当成
-    # MS2，MS1 分支一张也取不到，最终触发 "argument is of length zero"。
-    # 改以 index 的 MSOrder 为准（"Ms" = MS1），正负离子都成立。
+    # 2026-10-26: the original code used rawrr::readSpectrum(scan = 1:N, mode="profile")
+    # and read every scan in one go. Each rawrr scan object carries both the profile
+    # array (mZ, ~28,112 points for SA1.raw) and the centroid stream (centroid.mZ,
+    # ~1,809 points): 444 KB per scan; 12,470 scans = 5.4 GB, then copied into the
+    # spectra list and converted to data.frame. Measured: R grew to 22 GB, system
+    # memory ran out and the page stayed grey forever.
+    # Now reads in chunks of 200 scans, keeping only the centroid array:
+    # ~0.3 GB resident per file, with identical results (the original only ever
+    # took the centroid array as well).
+    # 2026-10-26: msLevel used to be decided by strict equality between scanType and
+    # the constant MS1_SCAN_TYPE ("FTMS - p ESI ...", negative mode); positive-mode
+    # files read "FTMS + p ESI ...", so every comparison failed -> all 12,470 scans of
+    # SA1.raw were taken as MS2, the MS1 branch got nothing, and
+    # "argument is of length zero" was triggered.
+    # Now the MSOrder from the index is authoritative ("Ms" = MS1), true for both
+    # ion modes.
     idx <- rawrr::readIndex(filepath)
     n_scans <- nrow(idx)
     if (is.null(n_scans) || n_scans < 1L) {
-      stop("无法读取扫描索引（文件可能损坏或不是有效的 .raw）：", basename(filepath))
+      stop("Cannot read the scan index (file may be corrupt or not a valid .raw): ", basename(filepath))
     }
 
     chunk <- 200L
     starts <- seq.int(1L, n_scans, by = chunk)
     scan_vec <- as.numeric(idx$scan)
-    # 不同 rawrr 版本 index 列名不同：新版给 StartTime（已是分钟），
-    # 老版给 RT（秒）。按列名自适应，避免整张表变成 0 行。
+    # rawrr versions differ in index column names: the newer one gives StartTime
+    # (already in minutes), the older one gives RT (seconds). Adapt by column name
+    # so the whole table does not end up with 0 rows.
     st_vec <- if ("StartTime" %in% names(idx)) {
       as.numeric(idx$StartTime)
     } else {
@@ -388,7 +394,8 @@ read_ms_file <- function(filepath, ppm = 10) {
         pos <- pos + 1L
         mz <- x[["centroid.mZ"]]
         it <- x[["centroid.intensity"]]
-        # 少数扫描没有 centroid 流：退回 profile 阵列，避免整张谱丢失
+        # a few scans have no centroid stream: fall back to the profile array so
+        # the whole spectrum is not lost
         if (is.null(mz) || length(mz) == 0L) {
           mz <- x[["mZ"]]
           it <- x[["intensity"]]
@@ -406,14 +413,15 @@ read_ms_file <- function(filepath, ppm = 10) {
       spectra  <- spectra[seq_len(pos)]
     }
 
-    # MS1 / MS2 以 index 的 MSOrder 为准（正负离子都适用）
+    # MS1 / MS2 decided by the index MSOrder (holds for both ion modes)
     ms_level <- if (is.null(ms_order)) {
       ifelse(type_vec == MS1_SCAN_TYPE, 1L, 2L)
     } else {
       ifelse(ms_order[seq_len(pos)] == "Ms", 1L, 2L)
     }
 
-    # 前体 m/z：优先用 index 的 precursorMass，缺失时回退到扫描类型字符串
+    # precursor m/z: prefer precursorMass from the index, fall back to the
+    # scan-type string when it is missing
     ms2_value <- if (!is.null(prec_idx)) {
       v <- prec_idx[seq_len(pos)]
       v[!is.na(v) & v <= 0] <- NA_real_
@@ -442,8 +450,8 @@ read_ms_file <- function(filepath, ppm = 10) {
     # ---------------- mzML / mzXML (mzR) ----------------
     if (!requireNamespace("mzR", quietly = TRUE)) {
       stop(
-        "处理 .mzML/.mzXML 文件需要 mzR 包，",
-        "请在 R 中运行: BiocManager::install(\"mzR\")"
+        "Reading .mzML/.mzXML files requires the mzR package; ",
+        "please run in R: BiocManager::install(\"mzR\")"
       )
     }
 
@@ -500,7 +508,7 @@ read_ms_file <- function(filepath, ppm = 10) {
     return(list(scan_table = scan_table, spectra = spectra, ion_mode = ion_mode))
   }
 
-  stop("不支持的质谱文件格式: .", ext, "（支持 .raw / .mzML / .mzXML）")
+  stop("Unsupported mass-spec file format: .", ext, " (supported: .raw / .mzML / .mzXML)")
 }
 
 # ============================================================
@@ -522,68 +530,76 @@ FeatureGeter_server <- function(id){
     req(input$workdir)
     workdir <- input$workdir
     setwd(workdir)
-    append_log(paste("工作目录设置为：", workdir))
+    append_log(paste("Working directory set to: ", workdir))
 
     # ----------------------------------------------------------
-    # 实际保留时间范围（分钟）——界面填的是「采集时间」，不是输出的 RT。
+    # Effective retention-time range (minutes) -- the UI value is
+    # "acquisition time", not the output RT.
     #
-    # 输出 RT 的定义是「1 分钟桶的右端点」：RT = 桶号 + 1，桶号覆盖
-    # (桶号, 桶号+1]。所以用户写 1-10 min，落到桶号 1..10，输出 RT 就是
-    # 2-11。默认 1-18 -> RT 2-19，与原先写死的 keep_rt <- 1:18 等价。
+    # Output RT is defined as the right edge of a one-minute bin: RT = bin + 1,
+    # and a bin covers (bin, bin+1]. So a user entry of 1-10 min lands on bins
+    # 1..10 and the output RT is 2-11. The default 1-18 -> RT 2-19, equivalent to
+    # the previous hardcoded keep_rt <- 1:18.
     rt_min_v <- suppressWarnings(as.numeric(input$rt_min))
     rt_max_v <- suppressWarnings(as.numeric(input$rt_max))
     if (is.na(rt_min_v)) rt_min_v <- 1
     if (is.na(rt_max_v)) rt_max_v <- 18
     if (rt_max_v < rt_min_v) {
-      append_log(paste0("RT 范围无效（max < min），已交换为：",
+      append_log(paste0("Invalid RT range (max < min); swapped to: ",
                         rt_min_v, " - ", rt_max_v))
       tmp <- rt_min_v; rt_min_v <- rt_max_v; rt_max_v <- tmp
     }
-    # 桶号 = 截取到的整数分钟；桶号 + 1 才是写进 RT 列的值。
+    # bin = the integer minute clipped from the range; only bin + 1 is written
+    # into the RT column.
     bin_from <- as.integer(ceiling(rt_min_v))
     bin_to   <- as.integer(floor(rt_max_v))
-    append_log(sprintf("实际保留时间 %.1f - %.1f min -> 输出 RT 记作 %d - %d min",
+    append_log(sprintf("Effective RT %.1f - %.1f min -> output RT recorded as %d - %d min",
                        rt_min_v, rt_max_v, bin_from + 1L, bin_to + 1L))
 
     # ----------------------------------------------------------
-    # 峰强度下限。去卷积（按 ppm 窗口取最强）之后、RT 筛桶之前执行，
-    # 低于该值的峰直接丢弃。默认 10000，与原先写死的
-    # cleaned_df$intensity > 10000 完全一致；调低可换取更多低丰度
-    # 离子（检出率上升，但定量噪声也随之进来）。
+    # Minimum peak intensity. Applied after deconvolution (take the strongest
+    # peak per ppm window) and before binning by RT; peaks below it are dropped.
+    # Default 10000, exactly matching the previous hardcoded
+    # cleaned_df$intensity > 10000; lowering it buys more low-abundance ions
+    # (higher detection rate, but quantitative noise comes in with them).
     min_int_v <- suppressWarnings(as.numeric(input$min_intensity))
     if (is.na(min_int_v) || min_int_v < 0) min_int_v <- 10000
-    append_log(sprintf("峰强度下限：%.0f（去卷积后强度不超过该值的峰丢弃）", min_int_v))
+    append_log(sprintf("Minimum peak intensity: %.0f (peaks not above this intensity are dropped after deconvolution)", min_int_v))
 
     # ----------------------------------------------------------
-    # 去卷积窗口（相对质量容差，ppm）。同一分钟桶里堆起来的所有峰
-    # 按这个窗口归簇、每簇只留最强的一个。默认 10 ppm 与原先写死的
-    # min_ms2_difference_in_ppm = 10 完全一致；窗口越宽归并越激进，
-    # 能消掉同一离子的近重复行，但可能把两个真正分开的离子并掉。
-    # 界面限定 5-30 ppm、步长 5，这里再兜一层：越界夹紧、非整数倍
-    # 就近取整，保证实际生效的窗口只会是 5/10/15/20/25/30。
+    # Deconvolution window (relative mass tolerance, ppm). All peaks piled up in
+    # the same one-minute bin are clustered by this window and only the strongest
+    # one per cluster is kept. The default 10 ppm matches the previous hardcoded
+    # min_ms2_difference_in_ppm = 10; a wider window merges more aggressively, so
+    # it removes near-duplicate rows of the same ion but may also merge two ions
+    # that are genuinely separate. The UI limits it to 5-30 ppm in steps of 5;
+    # this adds one more fallback that clamps out-of-range values and rounds
+    # non-multiples to the nearest, so the effective window is only 5/10/15/20/25/30.
     ppm_v <- suppressWarnings(as.numeric(input$ppm_tol))
     if (is.na(ppm_v)) ppm_v <- 10
     ppm_eff <- min(max(round(ppm_v / 5) * 5, 5), 30)
     if (!isTRUE(all.equal(ppm_eff, ppm_v))) {
-      append_log(sprintf("去卷积窗口 %.1f ppm 不符合 5-30 / 步长 5，按 %.0f ppm 执行",
+      append_log(sprintf("Deconvolution window %.1f ppm is not 5-30 / step 5; using %.0f ppm",
                          ppm_v, ppm_eff))
     }
     ppm_v <- ppm_eff
-    append_log(sprintf("去卷积窗口：%.0f ppm（同桶内按此相对质量容差归簇，每簇取最强）", ppm_v))
+    append_log(sprintf("Deconvolution window: %.0f ppm (cluster within a bin at this relative mass tolerance, keep the strongest per cluster)", ppm_v))
 
     # ----------------------------------------------------------
-    # 进度条（不是装饰，是保活机制）
-    # 整个流程写在同一个 observeEvent 里，是一次几十秒到几分钟的
-    # 同步调用。每次 prog$set() 都会把控制权交还事件循环一次，
-    # httpuv 才有机会发出 SockJS 心跳（客户端 25 s 收不到就盖灰罩）。
-    # 不加 Progress 时，页面必然在约 25 s 后变灰，而 R 毫无察觉。
+    # Progress bar (not decoration -- it is the keep-alive mechanism)
+    # The whole pipeline lives in one observeEvent, i.e. a single synchronous
+    # call running for tens of seconds up to minutes. Every prog$set() hands
+    # control back to the event loop once, which is the only chance for httpuv
+    # to send a SockJS heartbeat (the client greys out after 25 s without one).
+    # Without Progress the page inevitably greys out after ~25 s, and R never
+    # notices.
     # ----------------------------------------------------------
     prog <- shiny::Progress$new(session, min = 0, max = 1)
     on.exit(prog$close(), add = TRUE)
-    prog$set(value = 0, message = "MSGeter", detail = "读取样本分组…")
+    prog$set(value = 0, message = "MSGeter", detail = "Reading sample groups...")
 
     #-----------------------------------------------------------
-    # 1. 读取样本分组文件
+    # 1. Read the sample group file
     #-----------------------------------------------------------
     req(input$sample_file)
     file_path <- input$sample_file$datapath
@@ -593,20 +609,20 @@ FeatureGeter_server <- function(id){
     } else if (grepl("\\.xlsx$", input$sample_file$name, ignore.case = TRUE)) {
       sample_info <- read_excel(file_path)
     } else {
-      append_log("❌ 不支持的文件格式（仅支持 .csv 或 .xlsx）")
+      append_log("❌ Unsupported file format (only .csv or .xlsx)")
       return(NULL)
     }
 
     if (!all(c("Sample", "Group") %in% names(sample_info))) {
-      append_log("❌ 文件必须包含列名：Sample 和 Group")
+      append_log("❌ The file must contain the columns: Sample and Group")
       return(NULL)
     }
 
-    append_log("✅ 样本分组文件已读取")
-    append_log(paste("检测到分组：", paste(unique(sample_info$Group), collapse = ", ")))
+    append_log("✅ Sample group file loaded")
+    append_log(paste("Groups detected: ", paste(unique(sample_info$Group), collapse = ", ")))
 
     #-----------------------------------------------------------
-    # 2. 处理质谱文件（.raw / .mzML / .mzXML）
+    # 2. Process the mass-spec files (.raw / .mzML / .mzXML)
     #-----------------------------------------------------------
     ms_files <- list.files(
       path = workdir,
@@ -615,37 +631,39 @@ FeatureGeter_server <- function(id){
       ignore.case = TRUE
     )
     if (length(ms_files) == 0) {
-      append_log("未找到任何 .raw / .mzML / .mzXML 文件。")
+      append_log("No .raw / .mzML / .mzXML files found.")
       return(NULL)
     }
 
-    append_log(paste("检测到", length(ms_files), "个质谱文件（.raw/.mzML/.mzXML）。"))
+    append_log(paste("Detected", length(ms_files), "mass-spec files (.raw/.mzML/.mzXML)."))
     all_samples_data <- list()
     all_ms2_data <- list()
     ion_modes <- list()
 
-    # MGF 不再等 20 个样品全读完再统一写。每处理完一个文件立即落盘，
-    # 然后释放该样品的完整谱图。原先的 all_S 会把所有 raw 的全部
-    # 谱图常驻内存（实测 20 个样品峰值 6.2 GB），而它唯一的用途
-    # 就是最后写 MGF，完全没必要攒着。
+    # MGF is no longer written only after all 20 samples have been read. Each
+    # file is flushed to disk as soon as it is processed, and the full spectra
+    # of that sample are released right after. The old all_S kept every
+    # spectrum of every raw file resident (measured peak 6.2 GB for 20
+    # samples), while its only use was writing MGF at the very end, so there
+    # was no reason to hold on to it.
     msp_dir <- "MS2_MGF"
     dir.create(msp_dir, showWarnings = FALSE)
     n_files <- length(ms_files)
 
     for (k in seq_along(ms_files)) {
       msfile <- ms_files[k]
-      append_log(paste0("正在处理（", k, "/", n_files, "）：", basename(msfile)))
+      append_log(paste0("Processing (", k, "/", n_files, "): ", basename(msfile)))
       sample_id <- file_path_sans_ext(basename(msfile))
       prog$set(
         value  = 0.80 * (k - 1) / n_files,
-        detail = sprintf("读取 %d/%d：%s", k, n_files, sample_id)
+        detail = sprintf("Reading %d/%d: %s", k, n_files, sample_id)
       )
 
       # guard: same sample name present in more than one format
       # (e.g. both P173.raw and P173.mzML) -> keep the first, skip the rest
       if (sample_id %in% names(all_ms2_data)) {
-        append_log(paste("⚠️ 样本", sample_id,
-                         "已由其他格式的文件处理过，跳过：", basename(msfile)))
+        append_log(paste("⚠️ Sample", sample_id,
+                         "was already processed from a file in another format; skipping:", basename(msfile)))
         next
       }
 
@@ -656,9 +674,9 @@ FeatureGeter_server <- function(id){
       mem_probe(sprintf("%d/%d %s read (%d scans, %.1f MB file)", k, n_files,
                         sample_id, nrow(st),
                         file.size(msfile) / 1024^2))
-      prog$set(detail = sprintf("解析 %d/%d：%s", k, n_files, sample_id))
+      prog$set(detail = sprintf("Parsing %d/%d: %s", k, n_files, sample_id))
 
-      # ---------------- MS2 扫描信息表 ----------------
+      # ---------------- MS2 scan info table ----------------
       i_ms2 <- st %>%
         filter(msLevel == 2) %>%
         arrange(ms2_value) %>%
@@ -694,11 +712,12 @@ FeatureGeter_server <- function(id){
 
       all_ms2_data[[sample_id]] <- i_ms2
 
-      # ---------------- MS1 数据提取与清洗 ----------------
-      # 原写法每个扫描都 bind_rows 一次，等于把该分钟已累积的表整份复制，
-      # 4 万次扫描就是 O(n^2) 的拷贝量与 GC 压力（实测一个样品能把 R
-      # 撑到 16 GB、耗掉 54 分钟 CPU）。这里改成"每分钟一个 list，最后
-      # 一次性 bind_rows"，结果完全一致，拷贝量降到 O(n)。
+      # ---------------- MS1 data extraction and cleaning ----------------
+      # The original code called bind_rows once per scan, i.e. copied the table
+      # already accumulated for that minute in full; 40,000 scans meant O(n^2)
+      # copying and GC pressure (measured: one sample pushed R to 16 GB and
+      # burned 54 minutes of CPU). Now: "one list per minute, a single
+      # bind_rows at the end" -- identical results, copying down to O(n).
       merged_chunks <- list()
       for (i in seq_len(nrow(st))) {
         if (st$msLevel[i] != 1) next
@@ -706,9 +725,11 @@ FeatureGeter_server <- function(id){
         if (is.null(spec) || is.null(spec$mz) || length(spec$mz) == 0) next
         minute_label <- floor(as.numeric(st$StartTime[i]))
         label <- as.character(minute_label)
-        # rt_scan：这条质心来自哪张扫描（分钟，亚分钟精度）。去卷积只按行取子集，
-        # 所以被选中的那条峰天然带着它所属扫描的 RT —— RT_apex 就是这么来的，
-        # 不需要二次读谱（CLI 的 msg-extract 同口径）。
+        # rt_scan: which scan this centroid came from (minutes, sub-minute
+        # precision). Deconvolution only subsets rows, so the peak it keeps
+        # naturally carries the RT of the scan it belongs to -- that is where
+        # RT_apex comes from, with no second read of the spectra (same
+        # convention as msg-extract in the CLI).
         df <- data.frame(mz = spec$mz, intensity = spec$intensity,
                          rt_scan = as.numeric(st$StartTime[i]))
         merged_chunks[[label]][[length(merged_chunks[[label]]) + 1L]] <- df
@@ -720,8 +741,9 @@ FeatureGeter_server <- function(id){
       for (label in names(merged_centroids)) {
         peaks <- merged_centroids[[label]]
         if (nrow(peaks) >= 2) {
-          # 去卷积只认 mz / intensity 两列（函数内部会强行改列名），
-          # 因此单独喂两列，再按 (mz, intensity) 把 rt_scan 接回来。
+          # Deconvolution only understands the mz / intensity columns (the
+          # function overwrites the column names), so feed it just those two and
+          # then join rt_scan back by (mz, intensity).
           cleaned_mat <- clean_spectrum_keep_max(
             as.matrix(peaks[, c("mz", "intensity")]),
             min_mz = 0,
@@ -735,9 +757,11 @@ FeatureGeter_server <- function(id){
           cleaned_df <- as.data.frame(cleaned_mat)
           colnames(cleaned_df) <- c("mz", "intensity")
           cleaned_df <- cleaned_df[cleaned_df$intensity > min_int_v, ]
-          # RT_apex：簇内最强峰所属扫描的保留时间（分钟，亚分钟精度）。
-          # 同一分钟桶内若出现 (mz, intensity) 完全相同的重复行，取第一张扫描
-          # —— 反正都在同一分钟桶里，最坏也只退回整分钟口径。
+          # RT_apex: retention time of the scan that owns the strongest peak in
+          # the cluster (minutes, sub-minute precision). If rows with an identical
+          # (mz, intensity) repeat within the same one-minute bin, the first scan
+          # wins -- they are all in the same bin anyway, so the worst case falls
+          # back to whole-minute resolution.
           if (nrow(cleaned_df) > 0L) {
             key_out <- paste(cleaned_df$mz, cleaned_df$intensity, sep = "|")
             key_in  <- paste(peaks$mz, peaks$intensity, sep = "|")
@@ -751,8 +775,9 @@ FeatureGeter_server <- function(id){
         }
       }
 
-      # 只保留桶号落在 [bin_from, bin_to] 的分钟桶。
-      # 桶号 n 的 RT 列写 n+1，所以实际时间 1-10 min 输出的是 RT 2-11。
+      # Keep only the one-minute bins whose bin number lies in [bin_from, bin_to].
+      # Bin n writes n+1 into the RT column, so an acquisition range of 1-10 min
+      # outputs RT 2-11.
       keep_bins <- if (bin_to < bin_from) integer(0) else {
         intersect(bin_from:bin_to, as.integer(names(cleaned_centroids)))
       }
@@ -763,9 +788,9 @@ FeatureGeter_server <- function(id){
                         length(merged_centroids),
                         if (is.null(subset_cleaned)) 0L else nrow(subset_cleaned)))
 
-      # 所选 RT 范围里一个桶都没有时 do.call(rbind, list(NULL,...)) 返回 NULL，
-      # 原来的 `if (nrow(subset_cleaned) > 0)` 于是收到 logical(0)，
-      # 抛 "argument is of length zero"，整个 observer 直接崩掉。
+      # When the selected RT range contains no bin at all, do.call(rbind, list(NULL,...))
+      # returns NULL, so the old `if (nrow(subset_cleaned) > 0)` received logical(0)
+      # and threw "argument is of length zero", crashing the whole observer.
       if (!is.null(subset_cleaned) && nrow(subset_cleaned) > 0) {
         subset_cleaned$mz <- round(subset_cleaned$mz, 4)
         subset_cleaned$intensity <- round(subset_cleaned$intensity, 0)
@@ -775,8 +800,9 @@ FeatureGeter_server <- function(id){
           subset_cleaned$RT_apex <- NA_real_
         }
         subset_cleaned$RT_apex <- round(subset_cleaned$RT_apex, 4)
-        # 列序 = CLI 的 msg-extract 输出（含 RT_apex 共 6 列），
-        # 写 xlsx 时每块 6 列 + 1 空列 = 块宽 7，dmf_read_samples 自动识别。
+        # Column order = msg-extract output of the CLI (6 columns including
+        # RT_apex). In the xlsx each block is 6 columns + 1 empty column = block
+        # width 7, which dmf_read_samples detects automatically.
         subset_cleaned <- subset_cleaned %>% select(Sample, RT, RT_mz, mz, intensity, RT_apex)
       } else {
         subset_cleaned <- data.frame(Sample = sample_id, RT = numeric(),
@@ -786,7 +812,7 @@ FeatureGeter_server <- function(id){
 
       all_samples_data[[sample_id]] <- subset_cleaned
 
-      # ---------------- 立即写 MGF，随后释放谱图 ----------------
+      # ---------------- Write MGF immediately, then release the spectra ----------------
       sample_ion_mode <- ion_modes[[sample_id]]
       ms2_df <- all_ms2_data[[sample_id]]
       mgf_chunks <- vector("list", nrow(ms2_df))
@@ -808,14 +834,16 @@ FeatureGeter_server <- function(id){
         )
       }
 
-      # 无 MS2 谱时 unlist 得到 NULL，writeLines(NULL) 会直接报错，
-      # 这里显式退化成空字符向量（生成空 .msp，与原行为一致）
+      # With no MS2 spectrum unlist yields NULL and writeLines(NULL) errors out,
+      # so degrade explicitly to an empty character vector (an empty .msp is
+      # written, matching the original behaviour)
       mgf_text <- unlist(mgf_chunks, use.names = FALSE)
       if (is.null(mgf_text)) mgf_text <- character(0)
       writeLines(mgf_text, file.path(msp_dir, paste0(sample_id, ".msp")))
 
-      # 谱图与去卷积中间态是每轮最大的对象，写完 MGF 立刻放掉；
-      # 否则 20 个样品的峰值会在收尾阶段叠到数 GB。
+      # Spectra and deconvolution intermediates are the largest objects of each
+      # round, so release them right after the MGF is written; otherwise the
+      # peaks of 20 samples stack up to several GB in the final phase.
       rm(ms, st, spectra, merged_centroids, cleaned_centroids,
          mgf_chunks, ms2_df)
       gc(verbose = FALSE)
@@ -825,33 +853,35 @@ FeatureGeter_server <- function(id){
     }
 
     #-----------------------------------------------------------
-    # 3. 导出结果
+    # 3. Export results
     #-----------------------------------------------------------
-    prog$set(value = 0.82, detail = "导出 MS2_Group_Info.csv")
+    prog$set(value = 0.82, detail = "Exporting MS2_Group_Info.csv")
     if (length(all_ms2_data) > 0) {
       combined_ms2 <- do.call(rbind, all_ms2_data)
       write.csv(combined_ms2, "MS2_Group_Info.csv", row.names = FALSE)
-      append_log("✅ 已导出 MS2_Group_Info.csv")
+      append_log("✅ Exported MS2_Group_Info.csv")
       rm(combined_ms2)
     } else {
-      append_log("⚠️ 没有可导出的 MS2 扫描信息，跳过 MS2_Group_Info.csv")
+      append_log("⚠️ No MS2 scan info to export; skipping MS2_Group_Info.csv")
     }
-    append_log(paste0("✅ 已写出 ", length(ion_modes), " 个 MGF 文件到 ", msp_dir, "/"))
+    append_log(paste0("✅ Wrote ", length(ion_modes), " MGF files to ", msp_dir, "/"))
 
 
 
-    # （MGF 已在主循环内逐样品写出，此处不再二次遍历）
+    # (MGF is already written per sample inside the main loop, no second pass here)
 
 
 
 
     # ----------------------------------------------------------
-    # Clean_MS1_Data_Group*.xlsx 的 Sample 列必须写纯数字。
-    # 下游 dmf_read_samples() 会对每个样品块（6 列数据 + 1 空列 = 块宽 7）的首行做 as.numeric()，
-    # 遇到 "P173" 得到 NA，整列判空后直接报"首行没有任何样品编号"。
-    # 只改这一列的输出值：all_samples_data 的 key（= 文件名）保持不变，
-    # MS2_Group_Info.csv 与 MGF 的 NAME 仍是原始文件名，便于追溯。
-    # 取"第一个连续数字串"：P173 -> 173，Sample_07 -> 07（保留前导零）。
+    # The Sample column of Clean_MS1_Data_Group*.xlsx must be pure digits.
+    # Downstream dmf_read_samples() runs as.numeric() on the first row of each
+    # sample block (6 data columns + 1 empty column = block width 7) and gets NA
+    # for "P173"; the column then looks empty and it reports "no sample numbers in
+    # the first row". Only the output value of this column changes: the keys of
+    # all_samples_data (= file names) stay as they are, and the NAME field in
+    # MS2_Group_Info.csv and MGF is still the original file name for traceability.
+    # Take the "first run of digits": P173 -> 173, Sample_07 -> 07 (leading zero kept).
     # ----------------------------------------------------------
     num_from_id <- function(id) {
       m <- regmatches(id, regexpr("[0-9]+", id))
@@ -862,23 +892,23 @@ FeatureGeter_server <- function(id){
 
     no_digit <- names(sample_num)[is.na(sample_num)]
     if (length(no_digit) > 0L) {
-      append_log(paste("⚠️ 样品名里取不到数字，这些块将保留原名：",
+      append_log(paste("⚠️ No digits found in these sample names, the blocks keep the original name:",
                        paste(no_digit, collapse = ", ")))
     }
     good_num <- sample_num[!is.na(sample_num)]
     dup_num <- unique(good_num[duplicated(good_num)])
     if (length(dup_num) > 0L) {
-      append_log(paste("⚠️ 转成纯数字后编号重复，下游会混淆：",
+      append_log(paste("⚠️ Duplicate numbers after conversion to digits, downstream will be confused:",
                        paste(dup_num, collapse = ", ")))
     }
 
-    # 导出清洗后的 MS1 数据：按分组写入
+    # Export the cleaned MS1 data, written group by group
     groups <- unique(sample_info$Group)
     for (gi in seq_along(groups)) {
       grp <- groups[gi]
       prog$set(
         value  = 0.85 + 0.14 * (gi - 1) / length(groups),
-        detail = sprintf("写 Excel %d/%d：Group %s", gi, length(groups), grp)
+        detail = sprintf("Writing Excel %d/%d: Group %s", gi, length(groups), grp)
       )
       grp_samples <- sample_info %>% filter(Group == grp) %>% pull(Sample)
       wb <- createWorkbook()
@@ -896,22 +926,22 @@ FeatureGeter_server <- function(id){
       }
       out_file <- paste0("Clean_MS1_Data_Group", grp, ".xlsx")
       saveWorkbook(wb, out_file, overwrite = TRUE)
-      append_log(paste0("✅ 已保存 ", out_file, "（样品编号：",
-                        paste(written, collapse = ", "), "）"))
-      # openxlsx 的 workbook 在写出后仍持有整张表，逐组放掉
+      append_log(paste0("✅ Saved ", out_file, " (sample numbers: ",
+                        paste(written, collapse = ", "), ")"))
+      # the openxlsx workbook still holds the whole sheet after saving, so drop it per group
       rm(wb); gc(verbose = FALSE)
     }
 
-    prog$set(value = 1, detail = "完成")
+    prog$set(value = 1, detail = "Done")
     output_files <- list.files(workdir, full.names = TRUE, recursive = TRUE)
     output$output_files <- renderTable({
       data.frame(
-        文件名 = basename(output_files),
-        路径 = normalizePath(output_files)
+        File = basename(output_files),
+        Path = normalizePath(output_files)
       )
     })
 
-    append_log("🎉 全部流程完成！")
+    append_log("🎉 All steps complete!")
   })
 })
 }
